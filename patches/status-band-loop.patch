@@ -1,8 +1,16 @@
 diff --git a/Loop/Loop.xcodeproj/project.pbxproj b/Loop/Loop.xcodeproj/project.pbxproj
-index f9e6271..afd1180 100644
+index f9e6271..8c3b820 100644
 --- a/Loop/Loop.xcodeproj/project.pbxproj
 +++ b/Loop/Loop.xcodeproj/project.pbxproj
-@@ -203,6 +203,7 @@
+@@ -194,6 +194,7 @@
+ 		43DBF0531C93EC8200B3C386 /* DeviceDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43DBF0521C93EC8200B3C386 /* DeviceDataManager.swift */; };
+ 		43DFB62320D4CAE7008A7BAE /* PumpManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43C3B6F620BBCAA30026CAFA /* PumpManager.swift */; };
+ 		43E3449F1B9D68E900C85C07 /* StatusTableViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43E3449E1B9D68E900C85C07 /* StatusTableViewController.swift */; };
++		D15B0A71A104A104A104A104 /* StatusBandPreviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B0A71A103A103A103A103 /* StatusBandPreviewController.swift */; };
+ 		43E93FB51E4675E800EAB8DB /* NumberFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43BFF0B31E45C1BE00FF19A9 /* NumberFormatter.swift */; };
+ 		43E93FB61E469A4000EAB8DB /* NumberFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43BFF0B31E45C1BE00FF19A9 /* NumberFormatter.swift */; };
+ 		43E93FB71E469A5100EAB8DB /* HKUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F526D5E1DF2459000A04910 /* HKUnit.swift */; };
+@@ -203,6 +204,7 @@
  		43F89CA322BDFBBD006BB54E /* UIActivityIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F89CA222BDFBBC006BB54E /* UIActivityIndicatorView.swift */; };
  		43FCBBC21E51710B00343C1B /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 43776F9A1B8022E90074EA36 /* LaunchScreen.storyboard */; };
  		43FCEEA9221A615B0013DD30 /* StatusChartsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */; };
@@ -10,7 +18,15 @@ index f9e6271..afd1180 100644
  		43FCEEAD221A66780013DD30 /* DateFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEAC221A66780013DD30 /* DateFormatter.swift */; };
  		43FCEEB1221A863E0013DD30 /* StatusChartsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEB0221A863E0013DD30 /* StatusChartsManager.swift */; };
  		4F08DE8F1E7BB871006741EA /* CollectionType+Loop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F08DE8E1E7BB871006741EA /* CollectionType+Loop.swift */; };
-@@ -963,6 +964,7 @@
+@@ -954,6 +956,7 @@
+ 		43E2D90B1D20C581004DA55F /* LoopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LoopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		43E2D90F1D20C581004DA55F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+ 		43E3449E1B9D68E900C85C07 /* StatusTableViewController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = StatusTableViewController.swift; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.swift; };
++		D15B0A71A103A103A103A103 /* StatusBandPreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBandPreviewController.swift; sourceTree = "<group>"; };
+ 		43EDEE6B1CF2E12A00393BE3 /* Loop.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xml; path = Loop.entitlements; sourceTree = "<group>"; };
+ 		43F41C361D3BF32400C11ED6 /* UIAlertController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UIAlertController.swift; sourceTree = "<group>"; };
+ 		43F5C2C81B929C09003EB13D /* HealthKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = HealthKit.framework; path = System/Library/Frameworks/HealthKit.framework; sourceTree = SDKROOT; };
+@@ -963,6 +966,7 @@
  		43F78D4B1C914197002152D1 /* LoopKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = LoopKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
  		43F89CA222BDFBBC006BB54E /* UIActivityIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIActivityIndicatorView.swift; sourceTree = "<group>"; };
  		43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusChartsManager.swift; sourceTree = "<group>"; };
@@ -18,7 +34,15 @@ index f9e6271..afd1180 100644
  		43FCEEAC221A66780013DD30 /* DateFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateFormatter.swift; sourceTree = "<group>"; };
  		43FCEEB0221A863E0013DD30 /* StatusChartsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusChartsManager.swift; sourceTree = "<group>"; };
  		4D3B40021D4A9DFE00BC6334 /* G4ShareSpy.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = G4ShareSpy.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-@@ -2029,6 +2031,7 @@
+@@ -1955,6 +1959,7 @@
+ 				437D9BA21D7BC977007245E8 /* PredictionTableViewController.swift */,
+ 				439A7941211F631C0041B75F /* RootNavigationController.swift */,
+ 				43E3449E1B9D68E900C85C07 /* StatusTableViewController.swift */,
++				D15B0A71A103A103A103A103 /* StatusBandPreviewController.swift */,
+ 				89CA2B31226C18B8004D9350 /* TestingScenariosTableViewController.swift */,
+ 				4302F4E01D4E9C8900F0FCAF /* TextFieldTableViewController.swift */,
+ 			);
+@@ -2029,6 +2034,7 @@
  				E9BB27AA23B85C3500FB4987 /* SleepStore.swift */,
  				B470F5832AB22B5100049695 /* StatefulPluggable.swift */,
  				43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */,
@@ -26,7 +50,7 @@ index f9e6271..afd1180 100644
  				1D63DEA426E950D400F46FA5 /* SupportManager.swift */,
  				4F70C20F1DE8FAC5006380B7 /* ExtensionDataManager.swift */,
  				89ADE13A226BFA0F0067222B /* TestingScenariosManager.swift */,
-@@ -3436,6 +3439,7 @@
+@@ -3436,9 +3442,11 @@
  				C1742332259BEADC00399C9D /* ManualEntryDoseView.swift in Sources */,
  				43F64DD91D9C92C900D24DC6 /* TitleSubtitleTableViewCell.swift in Sources */,
  				43FCEEA9221A615B0013DD30 /* StatusChartsManager.swift in Sources */,
@@ -34,6 +58,10 @@ index f9e6271..afd1180 100644
  				A9F703752489C9A000C98AD8 /* GlucoseStore+SimulatedCoreData.swift in Sources */,
  				E95D380524EADF78005E2F50 /* GlucoseStoreProtocol.swift in Sources */,
  				43E3449F1B9D68E900C85C07 /* StatusTableViewController.swift in Sources */,
++				D15B0A71A104A104A104A104 /* StatusBandPreviewController.swift in Sources */,
+ 				B42D124328D371C400E43D22 /* AlertMuter.swift in Sources */,
+ 				A96DAC242838325900D94E38 /* DiagnosticLog.swift in Sources */,
+ 				A9CBE45A248ACBE1008E7BA2 /* DosingDecisionStore+SimulatedCoreData.swift in Sources */,
 diff --git a/Loop/Loop/Managers/DisplayStatusLog.swift b/Loop/Loop/Managers/DisplayStatusLog.swift
 new file mode 100644
 index 0000000..c4d6788
@@ -321,6 +349,161 @@ index 79ec51a..ca78821 100644
 +        cob.statusBands = bands
 +        for index in ChartIndex.allCases {
 +            invalidateChart(atIndex: index.rawValue)
++        }
++    }
++}
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index eea0299..6f740f0 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -34,6 +34,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+             window.makeKeyAndVisible()
+         }
+ 
++        // Simulator screenshots only. A normal launch never passes this argument,
++        // and this path returns before Loop is started, so it does not dose.
++        if ProcessInfo.processInfo.arguments.contains("-LoopStatusBandPreview") {
++            window?.rootViewController = StatusBandPreviewController()
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         guard let loopAppManager else { return }
+ 
+         let launchOptions = (UIApplication.shared.delegate as? AppDelegate)?.launchOptions
+diff --git a/Loop/Loop/View Controllers/StatusBandPreviewController.swift b/Loop/Loop/View Controllers/StatusBandPreviewController.swift
+new file mode 100644
+index 0000000..3c2c14c
+--- /dev/null
++++ b/Loop/Loop/View Controllers/StatusBandPreviewController.swift	
+@@ -0,0 +1,130 @@
++//
++//  StatusBandPreviewController.swift
++//  Loop
++//
++//  Display-only screen used by the simulator check.
++//  It is shown only when the app is launched with -LoopStatusBandPreview.
++//  The normal launch path does not use it, and it does not start dosing.
++//
++
++import HealthKit
++import LoopKit
++import LoopKitUI
++import UIKit
++
++/// Shows the real home-screen chart drawing with sample colors, for a simulator screenshot.
++final class StatusBandPreviewController: UIViewController {
++
++    private let chartsManager = StatusChartsManager(colors: .primary, settings: .default, traitCollection: .current)
++    private let header = UIView()
++    private let titleLabel = UILabel()
++    private let nowButton = UIButton(type: .system)
++    private var chartHosts: [UIView] = []
++    private var didRender = false
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        view.backgroundColor = .systemBackground
++
++        header.backgroundColor = .secondarySystemBackground
++        titleLabel.font = .preferredFont(forTextStyle: .footnote)
++        titleLabel.textColor = .secondaryLabel
++        titleLabel.adjustsFontSizeToFitWidth = true
++        titleLabel.minimumScaleFactor = 0.7
++        titleLabel.text = "Looking back · red, then blue stripes, then green"
++        nowButton.setTitle("Now", for: .normal)
++        nowButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
++        nowButton.accessibilityIdentifier = "Now"
++        header.addSubview(titleLabel)
++        header.addSubview(nowButton)
++        view.addSubview(header)
++
++        for name in ["Glucose", "Active Insulin", "Insulin Delivery", "Active Carbohydrates"] {
++            let host = UIView()
++            host.backgroundColor = .systemBackground
++            let label = UILabel()
++            label.text = name
++            label.font = .preferredFont(forTextStyle: .caption1)
++            label.textColor = .label
++            label.tag = 1
++            host.addSubview(label)
++            chartHosts.append(host)
++            view.addSubview(host)
++        }
++    }
++
++    override func viewDidLayoutSubviews() {
++        super.viewDidLayoutSubviews()
++
++        let headerHeight: CGFloat = 44
++        header.frame = CGRect(x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: headerHeight)
++        nowButton.sizeToFit()
++        nowButton.frame.origin = CGPoint(x: header.bounds.width - nowButton.bounds.width - 16, y: (headerHeight - nowButton.bounds.height) / 2)
++        titleLabel.frame = CGRect(x: 16, y: 0, width: nowButton.frame.minX - 24, height: headerHeight)
++
++        let top = header.frame.maxY
++        let chartHeight = max(80, (view.bounds.height - top - view.safeAreaInsets.bottom) / CGFloat(chartHosts.count))
++        for (index, host) in chartHosts.enumerated() {
++            host.frame = CGRect(x: 0, y: top + CGFloat(index) * chartHeight, width: view.bounds.width, height: chartHeight)
++            if let label = host.viewWithTag(1) {
++                label.frame = CGRect(x: 12, y: 2, width: host.bounds.width - 24, height: 16)
++            }
++        }
++
++        guard !didRender, chartHosts.first?.bounds.height ?? 0 > 70 else {
++            return
++        }
++        didRender = true
++        renderCharts()
++    }
++
++    private func renderCharts() {
++        let now = Date()
++        let start = now.addingTimeInterval(.hours(-4))
++        let end = now.addingTimeInterval(.hours(2))
++        chartsManager.startDate = start
++        chartsManager.maxEndDate = end
++        chartsManager.updateEndDate(end)
++
++        let redEnd = start.addingTimeInterval(.hours(1.5))
++        let blueEnd = start.addingTimeInterval(.hours(3))
++        chartsManager.setStatusBands([
++            StatusBandSegment(start: start, end: redEnd, kind: .notCompleting),
++            StatusBandSegment(start: redEnd, end: blueEnd, kind: .openLoop),
++            StatusBandSegment(start: blueEnd, end: end, kind: .closedLoop),
++        ])
++
++        var glucose: [SimpleGlucoseValue] = []
++        var insulin: [InsulinValue] = []
++        var carbs: [CarbValue] = []
++        var cursor = start
++        var index = 0
++        while cursor <= now {
++            let mgdl = 150 + 25 * sin(Double(index) / 3)
++            glucose.append(SimpleGlucoseValue(startDate: cursor, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: mgdl)))
++            insulin.append(InsulinValue(startDate: cursor, value: max(0, 1.2 + 0.4 * sin(Double(index) / 4))))
++            carbs.append(CarbValue(startDate: cursor, value: max(0, 12 + 8 * sin(Double(index) / 5))))
++            cursor = cursor.addingTimeInterval(.minutes(10))
++            index += 1
++        }
++        chartsManager.setGlucoseValues(glucose)
++        chartsManager.setIOBValues(insulin)
++        chartsManager.setCOBValues(carbs)
++        chartsManager.setDoseEntries([])
++        chartsManager.prerender()
++
++        let frames: [(CGRect) -> UIView?] = [
++            { self.chartsManager.glucoseChart(withFrame: $0)?.view },
++            { self.chartsManager.iobChart(withFrame: $0)?.view },
++            { self.chartsManager.doseChart(withFrame: $0)?.view },
++            { self.chartsManager.cobChart(withFrame: $0)?.view },
++        ]
++        for (index, host) in chartHosts.enumerated() {
++            let chartFrame = CGRect(x: 0, y: 18, width: host.bounds.width, height: host.bounds.height - 18)
++            if let chartView = frames[index](chartFrame) {
++                chartView.frame = chartFrame
++                host.addSubview(chartView)
++            }
 +        }
 +    }
 +}

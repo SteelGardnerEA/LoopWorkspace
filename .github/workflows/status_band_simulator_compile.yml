@@ -89,6 +89,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=- \
             DEVELOPMENT_TEAM= \
+            MAIN_APP_BUNDLE_IDENTIFIER=com.loopkit.loopstatusbandtest \
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build \
@@ -105,36 +106,48 @@ jobs:
       - name: Boot simulator and capture screen
         if: success()
         continue-on-error: true
+        shell: bash
         run: |
           set -u
           mkdir -p build/screenshots
           APP=$(find build/DerivedData -type d -path '*Debug-iphonesimulator*' -name 'Loop.app' | head -n 1 || true)
           if [ -z "${APP}" ]; then
-            echo "Loop.app was not found. Compile succeeded but there is no simulator app to launch." | tee build/screenshots/README.txt
+            echo "Loop.app was not found." | tee build/screenshots/README.txt
             exit 0
           fi
-          echo "App: ${APP}" | tee build/screenshots/README.txt
-          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist" || true)
-          echo "Bundle id: ${BUNDLE_ID}" | tee -a build/screenshots/README.txt
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist" | tr -d '[:space:]' || true)
+          {
+            echo "App: ${APP}"
+            echo "Bundle id: ${BUNDLE_ID}"
+          } | tee build/screenshots/README.txt
 
-          UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([A-F0-9-]*\)) (Shutdown)/\1/p' | head -n 1 || true)
-          if [ -z "${UDID}" ]; then
-            UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([A-F0-9-]*\)).*/\1/p' | head -n 1 || true)
+          DEVICE_TYPE=$(xcrun simctl list devicetypes | sed -n 's/.*(\(com.apple.CoreSimulator.SimDeviceType.iPhone-1[67][^)]*\)).*/\1/p' | head -n 1 | tr -d '[:space:]')
+          RUNTIME=$(xcrun simctl list runtimes available | sed -n 's/.*(\(com.apple.CoreSimulator.SimRuntime.iOS-[^)]*\)).*/\1/p' | tail -n 1 | tr -d '[:space:]')
+          echo "Device type: ${DEVICE_TYPE}" | tee -a build/screenshots/README.txt
+          echo "Runtime: ${RUNTIME}" | tee -a build/screenshots/README.txt
+          UDID=""
+          if [ -n "${DEVICE_TYPE}" ] && [ -n "${RUNTIME}" ]; then
+            UDID=$(xcrun simctl create "StatusBandPreview" "${DEVICE_TYPE}" "${RUNTIME}" | tr -d '[:space:]' || true)
           fi
           if [ -z "${UDID}" ]; then
-            echo "No iPhone simulator is installed." | tee -a build/screenshots/README.txt
-            exit 0
+            UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([0-9A-Fa-f-]\{36\}\)).*/\1/p' | head -n 1 | tr -d '[:space:]')
           fi
           echo "Simulator: ${UDID}" | tee -a build/screenshots/README.txt
+          if [ -z "${UDID}" ]; then
+            echo "No iPhone simulator could be created." | tee -a build/screenshots/README.txt
+            exit 0
+          fi
           xcrun simctl boot "${UDID}" || true
           xcrun simctl bootstatus "${UDID}" -b || true
-          xcrun simctl install "${UDID}" "${APP}"
-          if [ -n "${BUNDLE_ID}" ]; then
-            xcrun simctl launch "${UDID}" "${BUNDLE_ID}" || true
-            sleep 12
-            xcrun simctl io "${UDID}" screenshot build/screenshots/after-launch.png
-            echo "Screenshot is the first screen after launch. Loop usually opens on setup, not the charts, until a pump and CGM are chosen." | tee -a build/screenshots/README.txt
+          if ! xcrun simctl install "${UDID}" "${APP}"; then
+            echo "Install failed." | tee -a build/screenshots/README.txt
+            exit 0
           fi
+          # Opens the chart-color preview. Does not start a normal Loop session.
+          xcrun simctl launch "${UDID}" "${BUNDLE_ID}" -LoopStatusBandPreview || echo "Launch failed." | tee -a build/screenshots/README.txt
+          sleep 12
+          xcrun simctl io "${UDID}" screenshot build/screenshots/chart-colors.png || echo "Screenshot failed." | tee -a build/screenshots/README.txt
+          echo "chart-colors.png is a test screen of the real chart drawing: red, blue stripes, green, and a Now button. The normal app still opens on setup until a pump and CGM are chosen." | tee -a build/screenshots/README.txt
 
       - name: Upload build log and screenshots
         if: always()
