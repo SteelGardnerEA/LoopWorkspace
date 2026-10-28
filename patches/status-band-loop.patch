@@ -353,10 +353,22 @@ index 79ec51a..ca78821 100644
 +    }
 +}
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index eea0299..14318bf 100644
+index eea0299..66bec4d 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
-@@ -34,6 +34,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+@@ -9,6 +9,11 @@ import UIKit
+ import LoopKit
+ 
+ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
++    /// True only for the simulator chart screenshot. A normal launch does not pass the flag.
++    private var isStatusBandPreview: Bool {
++        ProcessInfo.processInfo.arguments.contains("-LoopStatusBandPreview")
++    }
++
+     var window: UIWindow?
+ 
+     private let log = DiagnosticLog(category: "SceneDelegate")
+@@ -34,6 +39,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
              window.makeKeyAndVisible()
          }
  
@@ -372,6 +384,22 @@ index eea0299..14318bf 100644
          guard let loopAppManager else { return }
  
          let launchOptions = (UIApplication.shared.delegate as? AppDelegate)?.launchOptions
+@@ -55,12 +69,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ 
+     func sceneDidBecomeActive(_ scene: UIScene) {
+         log.default(#function)
++        guard !isStatusBandPreview else { return }
+ 
+         loopAppManager?.didBecomeActive()
+     }
+ 
+     func sceneWillEnterForeground(_ scene: UIScene) {
+         log.default(#function)
++        // The preview never starts Loop, so this reset check has nothing to ask about.
++        guard !isStatusBandPreview else { return }
+ 
+         loopAppManager?.askUserToConfirmLoopReset()
+     }
 diff --git a/Loop/Loop/View Controllers/StatusBandPreviewController.swift b/Loop/Loop/View Controllers/StatusBandPreviewController.swift
 new file mode 100644
 index 0000000..c66c986
