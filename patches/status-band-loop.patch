@@ -325,7 +325,7 @@ index 79ec51a..ca78821 100644
 +    }
 +}
 diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
-index 580d67e..6aaf38d 100644
+index 580d67e..73c989e 100644
 --- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
 +++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
 @@ -145,7 +145,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
@@ -488,16 +488,23 @@ index 580d67e..6aaf38d 100644
      override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
          switch Section(rawValue: indexPath.section)! {
          case .charts:
-@@ -2223,6 +2287,201 @@ extension StatusTableViewController: SettingsViewModelDelegate {
+@@ -2197,6 +2261,10 @@ extension StatusTableViewController {
+             }
+         }
+     }
++
++    deinit {
++        displayStatusTimer?.invalidate()
++    }
+ }
+ 
+ extension StatusTableViewController: BluetoothObserver {
+@@ -2223,6 +2291,197 @@ extension StatusTableViewController: SettingsViewModelDelegate {
              settings.automaticDosingStrategy = strategy
          }
      }
 +
 +    // MARK: - Chart history and status tint
-+
-+    deinit {
-+        displayStatusTimer?.invalidate()
-+    }
 +
 +    private func setupChartHistoryScrolling() {
 +        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleChartHistoryPan(_:)))
