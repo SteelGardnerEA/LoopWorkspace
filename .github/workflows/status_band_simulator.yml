@@ -17,7 +17,9 @@ concurrency:
 jobs:
   compile-simulator:
     name: Compile for iOS Simulator
-    runs-on: macos-latest
+    # Standard Intel runner (free on public repos). macos-latest is the arm64 pool,
+    # which GitHub cancelled for lack of capacity. This is not a larger/paid runner.
+    runs-on: macos-26-intel
     timeout-minutes: 90
     steps:
       - name: Checkout
