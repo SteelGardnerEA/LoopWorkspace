@@ -1,0 +1,692 @@
+diff --git a/Loop/Loop.xcodeproj/project.pbxproj b/Loop/Loop.xcodeproj/project.pbxproj
+index f9e6271..afd1180 100644
+--- a/Loop/Loop.xcodeproj/project.pbxproj
++++ b/Loop/Loop.xcodeproj/project.pbxproj
+@@ -203,6 +203,7 @@
+ 		43F89CA322BDFBBD006BB54E /* UIActivityIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F89CA222BDFBBC006BB54E /* UIActivityIndicatorView.swift */; };
+ 		43FCBBC21E51710B00343C1B /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 43776F9A1B8022E90074EA36 /* LaunchScreen.storyboard */; };
+ 		43FCEEA9221A615B0013DD30 /* StatusChartsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */; };
++		D15B0A71A102A102A102A102 /* DisplayStatusLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B0A71A101A101A101A101 /* DisplayStatusLog.swift */; };
+ 		43FCEEAD221A66780013DD30 /* DateFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEAC221A66780013DD30 /* DateFormatter.swift */; };
+ 		43FCEEB1221A863E0013DD30 /* StatusChartsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43FCEEB0221A863E0013DD30 /* StatusChartsManager.swift */; };
+ 		4F08DE8F1E7BB871006741EA /* CollectionType+Loop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F08DE8E1E7BB871006741EA /* CollectionType+Loop.swift */; };
+@@ -963,6 +964,7 @@
+ 		43F78D4B1C914197002152D1 /* LoopKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = LoopKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		43F89CA222BDFBBC006BB54E /* UIActivityIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIActivityIndicatorView.swift; sourceTree = "<group>"; };
+ 		43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusChartsManager.swift; sourceTree = "<group>"; };
++		D15B0A71A101A101A101A101 /* DisplayStatusLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayStatusLog.swift; sourceTree = "<group>"; };
+ 		43FCEEAC221A66780013DD30 /* DateFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateFormatter.swift; sourceTree = "<group>"; };
+ 		43FCEEB0221A863E0013DD30 /* StatusChartsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusChartsManager.swift; sourceTree = "<group>"; };
+ 		4D3B40021D4A9DFE00BC6334 /* G4ShareSpy.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = G4ShareSpy.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+@@ -2029,6 +2031,7 @@
+ 				E9BB27AA23B85C3500FB4987 /* SleepStore.swift */,
+ 				B470F5832AB22B5100049695 /* StatefulPluggable.swift */,
+ 				43FCEEA8221A615B0013DD30 /* StatusChartsManager.swift */,
++				D15B0A71A101A101A101A101 /* DisplayStatusLog.swift */,
+ 				1D63DEA426E950D400F46FA5 /* SupportManager.swift */,
+ 				4F70C20F1DE8FAC5006380B7 /* ExtensionDataManager.swift */,
+ 				89ADE13A226BFA0F0067222B /* TestingScenariosManager.swift */,
+@@ -3436,6 +3439,7 @@
+ 				C1742332259BEADC00399C9D /* ManualEntryDoseView.swift in Sources */,
+ 				43F64DD91D9C92C900D24DC6 /* TitleSubtitleTableViewCell.swift in Sources */,
+ 				43FCEEA9221A615B0013DD30 /* StatusChartsManager.swift in Sources */,
++				D15B0A71A102A102A102A102 /* DisplayStatusLog.swift in Sources */,
+ 				A9F703752489C9A000C98AD8 /* GlucoseStore+SimulatedCoreData.swift in Sources */,
+ 				E95D380524EADF78005E2F50 /* GlucoseStoreProtocol.swift in Sources */,
+ 				43E3449F1B9D68E900C85C07 /* StatusTableViewController.swift in Sources */,
+diff --git a/Loop/Loop/Managers/DisplayStatusLog.swift b/Loop/Loop/Managers/DisplayStatusLog.swift
+new file mode 100644
+index 0000000..af9f620
+--- /dev/null
++++ b/Loop/Loop/Managers/DisplayStatusLog.swift
+@@ -0,0 +1,263 @@
++//
++//  DisplayStatusLog.swift
++//  Loop
++//
++//  Display-only log of home-screen chart status colors.
++//
++//  This file is not used for dosing. It writes its own JSON file under
++//  Application Support. Dose stores, the algorithm, and pump or CGM code do not read it.
++//
++
++import Foundation
++import LoopCore
++import os.log
++
++/// Colors the home-screen charts can show. Stored only for display.
++enum DisplayChartStatus: String, Codable, Equatable {
++    /// Closed loop on, loop still completing, pump and CGM still connected.
++    case closedLoop
++    /// Closed loop off, and Loop is still completing.
++    case openLoop
++    /// Loop not completing, pump or CGM disconnected, or a gap with no log.
++    case notCompleting
++}
++
++struct DisplayStatusSegment: Equatable {
++    var start: Date
++    var end: Date
++    var status: DisplayChartStatus
++}
++
++/// A small change-log of display status, kept for Loop's local cache length.
++///
++/// An entry is written when the status changes. While the app is open, the log
++/// also remembers the last moment status was actually looked at. Time after that
++/// moment, including while the app is closed or the phone is off, is treated as
++/// not completing (red) until the app looks again.
++final class DisplayStatusLog {
++
++    /// If we go longer than this without looking, the missing stretch is red.
++    /// A bit longer than the one-minute check, so a late timer is not a false gap.
++    static let unobservedGap: TimeInterval = 180
++
++    private struct Entry: Codable, Equatable {
++        var date: Date
++        var status: DisplayChartStatus
++    }
++
++    private struct Snapshot: Codable {
++        var entries: [Entry]
++        var lastObservedAt: Date?
++    }
++
++    private let log = OSLog(category: "DisplayStatusLog")
++    private let fileURL: URL
++    private let retention: TimeInterval
++    private let encoder: JSONEncoder = {
++        let encoder = JSONEncoder()
++        encoder.dateEncodingStrategy = .secondsSince1970
++        encoder.outputFormatting = [.sortedKeys]
++        return encoder
++    }()
++    private let decoder: JSONDecoder = {
++        let decoder = JSONDecoder()
++        decoder.dateDecodingStrategy = .secondsSince1970
++        return decoder
++    }()
++
++    private var entries: [Entry] = []
++    private var lastObservedAt: Date?
++    private var saveWork: DispatchWorkItem?
++
++    init(retention: TimeInterval = Bundle.main.localCacheDuration, fileURL: URL? = nil) {
++        self.retention = retention
++        if let fileURL = fileURL {
++            self.fileURL = fileURL
++        } else {
++            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
++                .appendingPathComponent("LoopDisplayStatus", isDirectory: true)
++            self.fileURL = directory.appendingPathComponent("DisplayStatusLog.json")
++        }
++        load()
++    }
++
++    /// Reads Loop's existing state and stores a display status. Does not change that state.
++    func recordObservation(closedLoopOn: Bool,
++                           lastLoopCompleted: Date?,
++                           pumpOrCGMDown: Bool,
++                           at date: Date = Date()) {
++        let loopNotCompleting = LoopCompletionFreshness(lastCompletion: lastLoopCompleted, at: date) == .stale
++        let status: DisplayChartStatus
++        if loopNotCompleting || pumpOrCGMDown {
++            status = .notCompleting
++        } else if !closedLoopOn {
++            status = .openLoop
++        } else {
++            status = .closedLoop
++        }
++        record(status, at: date)
++    }
++
++    func record(_ status: DisplayChartStatus, at date: Date) {
++        dispatchPrecondition(condition: .onQueue(.main))
++
++        var statusChanged = false
++        if let lastObservedAt = lastObservedAt, date.timeIntervalSince(lastObservedAt) > Self.unobservedGap {
++            statusChanged = appendChange(.notCompleting, at: lastObservedAt) || statusChanged
++        }
++        statusChanged = appendChange(status, at: date) || statusChanged
++        lastObservedAt = date
++        purge(keepingStatusAt: date.addingTimeInterval(-retention))
++        scheduleSave(immediate: statusChanged)
++    }
++
++    func flush() {
++        dispatchPrecondition(condition: .onQueue(.main))
++        saveWork?.cancel()
++        saveWork = nil
++        saveNow()
++    }
++
++    /// Status stretches covering `start`..<`end`. Unobserved gaps are not completing.
++    /// While the app is looking, the current color continues to the end of the chart,
++    /// including the usual future prediction area, so the live chart is fully tinted.
++    func segments(from start: Date, to end: Date, now: Date = Date()) -> [DisplayStatusSegment] {
++        guard end > start else {
++            return []
++        }
++
++        let sorted = entries.sorted { $0.date < $1.date }
++        let observingNow = lastObservedAt.map { now.timeIntervalSince($0) <= Self.unobservedGap } ?? false
++
++        var marks = [start, end]
++        for entry in sorted where entry.date > start && entry.date < end {
++            marks.append(entry.date)
++        }
++        if let lastObservedAt = lastObservedAt, lastObservedAt > start, lastObservedAt < end {
++            marks.append(lastObservedAt)
++        }
++        marks.sort()
++
++        var uniqueMarks: [Date] = []
++        for mark in marks where uniqueMarks.last != mark {
++            uniqueMarks.append(mark)
++        }
++
++        var result: [DisplayStatusSegment] = []
++        for index in 0..<(uniqueMarks.count - 1) {
++            let segmentStart = uniqueMarks[index]
++            let segmentEnd = uniqueMarks[index + 1]
++            guard segmentEnd > segmentStart else {
++                continue
++            }
++
++            let status: DisplayChartStatus
++            if let lastObservedAt = lastObservedAt, segmentStart >= lastObservedAt {
++                if observingNow {
++                    status = status(at: lastObservedAt, entries: sorted)
++                } else {
++                    status = .notCompleting
++                }
++            } else {
++                status = status(at: segmentStart, entries: sorted)
++            }
++
++            if let previous = result.last, previous.status == status, previous.end == segmentStart {
++                result[result.count - 1] = DisplayStatusSegment(start: previous.start, end: segmentEnd, status: status)
++            } else {
++                result.append(DisplayStatusSegment(start: segmentStart, end: segmentEnd, status: status))
++            }
++        }
++        return result
++    }
++
++    /// Returns true when the saved color actually changes.
++    @discardableResult
++    private func appendChange(_ status: DisplayChartStatus, at date: Date) -> Bool {
++        if let last = entries.last, last.status == status, last.date <= date {
++            return false
++        }
++        entries.append(Entry(date: date, status: status))
++        entries.sort { $0.date < $1.date }
++        collapseConsecutiveStatuses()
++        return true
++    }
++
++    private func status(at date: Date, entries: [Entry]) -> DisplayChartStatus {
++        var current: DisplayChartStatus = .notCompleting
++        for entry in entries {
++            if entry.date <= date {
++                current = entry.status
++            } else {
++                break
++            }
++        }
++        return current
++    }
++
++    /// Keep one entry from before the cutoff so the color at the start of the window is known.
++    private func purge(keepingStatusAt cutoff: Date) {
++        let older = entries.filter { $0.date < cutoff }
++        let newer = entries.filter { $0.date >= cutoff }
++        if let keep = older.last {
++            entries = [keep] + newer
++        } else {
++            entries = newer
++        }
++        collapseConsecutiveStatuses()
++    }
++
++    private func collapseConsecutiveStatuses() {
++        var collapsed: [Entry] = []
++        for entry in entries where collapsed.last?.status != entry.status {
++            collapsed.append(entry)
++        }
++        entries = collapsed
++    }
++
++    private func scheduleSave(immediate: Bool) {
++        if immediate {
++            saveWork?.cancel()
++            saveWork = nil
++            saveNow()
++            return
++        }
++        guard saveWork == nil else {
++            return
++        }
++        let work = DispatchWorkItem { [weak self] in
++            self?.saveWork = nil
++            self?.saveNow()
++        }
++        saveWork = work
++        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
++    }
++
++    private func load() {
++        guard FileManager.default.fileExists(atPath: fileURL.path) else {
++            return
++        }
++        do {
++            let data = try Data(contentsOf: fileURL)
++            let snapshot = try decoder.decode(Snapshot.self, from: data)
++            entries = snapshot.entries.sorted { $0.date < $1.date }
++            lastObservedAt = snapshot.lastObservedAt
++        } catch {
++            log.error("Could not read display status log: %{public}@", String(describing: error))
++            entries = []
++            lastObservedAt = nil
++        }
++    }
++
++    private func saveNow() {
++        let snapshot = Snapshot(entries: entries, lastObservedAt: lastObservedAt)
++        do {
++            let directory = fileURL.deletingLastPathComponent()
++            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++            let data = try encoder.encode(snapshot)
++            try data.write(to: fileURL, options: .atomic)
++        } catch {
++            log.error("Could not write display status log: %{public}@", String(describing: error))
++        }
++    }
++}
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 79ec51a..ca78821 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -136,3 +136,16 @@ extension StatusChartsManager {
+         return chart(atIndex: ChartIndex.cob.rawValue, frame: frame)
+     }
+ }
++
++extension StatusChartsManager {
++    /// Display-only background tint shared by the four home-screen charts.
++    func setStatusBands(_ bands: [StatusBandSegment]) {
++        glucose.statusBands = bands
++        iob.statusBands = bands
++        dose.statusBands = bands
++        cob.statusBands = bands
++        for index in ChartIndex.allCases {
++            invalidateChart(atIndex: index.rawValue)
++        }
++    }
++}
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 580d67e..6aaf38d 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -145,7 +145,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         addScenarioStepGestureRecognizers()
+ 
+         tableView.backgroundColor = .secondarySystemBackground
+-    
++
++        setupChartHistoryScrolling()
+     }
+ 
+     override func didReceiveMemoryWarning() {
+@@ -359,6 +360,20 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private var refreshContext = RefreshContext.all
+ 
++    /// How far before the normal live window the charts are scrolled.
++    /// Zero keeps the same on-screen window Loop already uses.
++    private var chartHistoryOffset: TimeInterval = 0
++
++    private var chartVisibleInterval = DateInterval(start: Date(), duration: .hours(6))
++
++    private let displayStatusLog = DisplayStatusLog()
++
++    private let chartHistoryPanDelegate = ChartHistoryPanDelegate()
++
++    private var chartHistoryReloadWork: DispatchWorkItem?
++
++    private var displayStatusTimer: Timer?
++
+     private var shouldShowHUD: Bool {
+         return !landscapeMode
+     }
+@@ -392,6 +407,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private func updateChartDateRange() {
+         // How far back should we show data? Use the screen size as a guide.
++        // The on-screen window stays this wide (about 50 points per hour).
++        // Scrolling moves that window. It does not draw all 7 days at once.
+         let availableWidth = (refreshContext.newSize ?? tableView.bounds.size).width - charts.fixedHorizontalMargin
+ 
+         let totalHours = floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour))
+@@ -399,13 +416,34 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
+ 
+         let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours))
+-        let chartStartDate = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
++        let liveStart = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
++
++        let earliestStart = Date().addingTimeInterval(-Bundle.main.localCacheDuration)
++        if chartHistoryOffset < 0 {
++            chartHistoryOffset = 0
++        }
++        var chartStartDate = liveStart.addingTimeInterval(-chartHistoryOffset)
++        if chartStartDate < earliestStart {
++            chartStartDate = earliestStart
++            chartHistoryOffset = max(0, liveStart.timeIntervalSince(earliestStart))
++        }
++        // No scroll must match the original live window exactly.
++        if chartHistoryOffset == 0 {
++            chartStartDate = liveStart
++        }
++
++        let chartEndDate = chartStartDate.addingTimeInterval(.hours(max(totalHours, 0)))
++        if chartEndDate >= chartStartDate {
++            chartVisibleInterval = DateInterval(start: chartStartDate, end: chartEndDate)
++        }
++
+         if charts.startDate != chartStartDate {
+             refreshContext.formUnion(RefreshContext.all)
+         }
+         charts.startDate = chartStartDate
+-        charts.maxEndDate = chartStartDate.addingTimeInterval(.hours(totalHours))
++        charts.maxEndDate = chartEndDate
+         charts.updateEndDate(charts.maxEndDate)
++        updateChartHistoryHeader()
+     }
+ 
+     override func reloadData(animated: Bool = false) {
+@@ -456,6 +494,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         var cobValues: [CarbValue]?
+         var carbsOnBoard: HKQuantity?
+         let startDate = charts.startDate
++        // Live view asks for the same open-ended range as before.
++        // A scrolled window asks only for the hours on screen.
++        let historyQueryEnd: Date? = chartHistoryOffset > 0 ? chartVisibleInterval.end : nil
+         let basalDeliveryState = self.basalDeliveryState
+         let automaticDosingEnabled = automaticDosingStatus.automaticDosingEnabled
+ 
+@@ -491,7 +532,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+             if currentContext.contains(.carbs) {
+                 reloadGroup.enter()
+-                self.deviceManager.carbStore.getCarbsOnBoardValues(start: startDate, end: nil, effectVelocities: state.insulinCounteractionEffects) { (result) in
++                self.deviceManager.carbStore.getCarbsOnBoardValues(start: startDate, end: historyQueryEnd, effectVelocities: state.insulinCounteractionEffects) { (result) in
+                     switch result {
+                     case .failure(let error):
+                         self.log.error("CarbStore failed to get carbs on board values: %{public}@", String(describing: error))
+@@ -511,7 +552,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         if currentContext.contains(.glucose) {
+             reloadGroup.enter()
+-            deviceManager.glucoseStore.getGlucoseSamples(start: startDate, end: nil) { (result) -> Void in
++            deviceManager.glucoseStore.getGlucoseSamples(start: startDate, end: historyQueryEnd) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("Failure getting glucose samples: %{public}@", String(describing: error))
+@@ -525,7 +566,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         if currentContext.contains(.insulin) {
+             reloadGroup.enter()
+-            deviceManager.doseStore.getInsulinOnBoardValues(start: startDate, end: nil, basalDosingEnd: nil) { (result) -> Void in
++            deviceManager.doseStore.getInsulinOnBoardValues(start: startDate, end: historyQueryEnd, basalDosingEnd: nil) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("DoseStore failed to get insulin on board values: %{public}@", String(describing: error))
+@@ -538,7 +579,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+ 
+             reloadGroup.enter()
+-            deviceManager.doseStore.getNormalizedDoseEntries(start: startDate, end: nil) { (result) -> Void in
++            deviceManager.doseStore.getNormalizedDoseEntries(start: startDate, end: historyQueryEnd) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("DoseStore failed to get normalized dose entries: %{public}@", String(describing: error))
+@@ -854,6 +895,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     }
+ 
+     private func redrawCharts() {
++        sampleDisplayStatus()
++        let bands = displayStatusLog.segments(from: chartVisibleInterval.start, to: chartVisibleInterval.end).map { segment in
++            StatusBandSegment(start: segment.start, end: segment.end, kind: segment.status.bandKind)
++        }
++        statusCharts.setStatusBands(bands)
++
+         tableView.beginUpdates()
+         charts.prerender()
+         for case let cell as ChartTableViewCell in tableView.visibleCells {
+@@ -1214,6 +1261,23 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     // MARK: - UITableViewDelegate
+ 
++    override func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
++        guard Section(rawValue: section) == .charts else {
++            return 0
++        }
++        return 36
++    }
++
++    override func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
++        guard Section(rawValue: section) == .charts else {
++            return nil
++        }
++        let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: ChartHistoryHeaderView.reuseIdentifier) as? ChartHistoryHeaderView
++            ?? ChartHistoryHeaderView(reuseIdentifier: ChartHistoryHeaderView.reuseIdentifier)
++        configureChartHistoryHeader(header)
++        return header
++    }
++
+     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+         switch Section(rawValue: indexPath.section)! {
+         case .charts:
+@@ -2223,6 +2287,201 @@ extension StatusTableViewController: SettingsViewModelDelegate {
+             settings.automaticDosingStrategy = strategy
+         }
+     }
++
++    // MARK: - Chart history and status tint
++
++    deinit {
++        displayStatusTimer?.invalidate()
++    }
++
++    private func setupChartHistoryScrolling() {
++        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleChartHistoryPan(_:)))
++        pan.maximumNumberOfTouches = 1
++        pan.cancelsTouchesInView = false
++        pan.delegate = chartHistoryPanDelegate
++        chartHistoryPanDelegate.tableView = tableView
++        tableView.addGestureRecognizer(pan)
++        // Vertical scrolling waits until this pan decides it is not a sideways chart swipe.
++        tableView.panGestureRecognizer.require(toFail: pan)
++
++        tableView.register(ChartHistoryHeaderView.self, forHeaderFooterViewReuseIdentifier: ChartHistoryHeaderView.reuseIdentifier)
++
++        displayStatusTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
++            self?.sampleDisplayStatus()
++        }
++
++        let notificationCenter = NotificationCenter.default
++        notificationObservers += [
++            notificationCenter.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
++                self?.sampleDisplayStatus()
++            },
++            notificationCenter.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
++                self?.sampleDisplayStatus()
++                self?.displayStatusLog.flush()
++            },
++        ]
++
++        sampleDisplayStatus()
++    }
++
++    @objc private func handleChartHistoryPan(_ pan: UIPanGestureRecognizer) {
++        switch pan.state {
++        case .changed:
++            let translation = pan.translation(in: tableView).x
++            pan.setTranslation(.zero, in: tableView)
++            guard LoopConstants.minimumChartWidthPerHour > 0 else {
++                return
++            }
++            // Drag toward the right to reveal earlier hours.
++            let hours = Double(translation / LoopConstants.minimumChartWidthPerHour)
++            chartHistoryOffset += .hours(hours)
++            scheduleChartHistoryReload()
++        case .ended, .cancelled, .failed:
++            scheduleChartHistoryReload()
++        default:
++            break
++        }
++    }
++
++    private func scheduleChartHistoryReload() {
++        updateChartHistoryHeader()
++        chartHistoryReloadWork?.cancel()
++        let work = DispatchWorkItem { [weak self] in
++            guard let self = self else {
++                return
++            }
++            self.refreshContext.formUnion(RefreshContext.all)
++            self.reloadData(animated: false)
++        }
++        chartHistoryReloadWork = work
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
++    }
++
++    @objc private func returnChartsToNow() {
++        chartHistoryOffset = 0
++        chartHistoryReloadWork?.cancel()
++        refreshContext.formUnion(RefreshContext.all)
++        updateChartHistoryHeader()
++        reloadData(animated: false)
++    }
++
++    private func updateChartHistoryHeader() {
++        guard let header = tableView.headerView(forSection: Section.charts.rawValue) as? ChartHistoryHeaderView else {
++            return
++        }
++        configureChartHistoryHeader(header)
++    }
++
++    private func configureChartHistoryHeader(_ header: ChartHistoryHeaderView) {
++        let scrolled = chartHistoryOffset > 1
++        header.nowButton.isHidden = !scrolled
++        if scrolled {
++            let formatter = DateIntervalFormatter()
++            formatter.dateStyle = .medium
++            formatter.timeStyle = .short
++            header.label.text = formatter.string(from: chartVisibleInterval.start, to: chartVisibleInterval.end)
++        } else {
++            header.label.text = NSLocalizedString("Swipe charts sideways to look back, up to 7 days", comment: "Hint above the home screen charts when they are showing the live window")
++        }
++        header.nowButton.removeTarget(nil, action: nil, for: .allEvents)
++        header.nowButton.addTarget(self, action: #selector(returnChartsToNow), for: .touchUpInside)
++    }
++
++    /// Writes the display log from Loop's current status. Does not change dosing.
++    private func sampleDisplayStatus() {
++        guard deviceManager != nil, automaticDosingStatus != nil else {
++            return
++        }
++
++        let pumpCritical = deviceManager.pumpStatusHighlight?.state == .critical
++        let cgmCritical = deviceManager.cgmStatusHighlight?.state == .critical
++        let glucoseStale = deviceManager.isGlucoseValueStale
++        let pumpDataStale = Date().timeIntervalSince(deviceManager.doseStore.lastAddedPumpData) > LoopCoreConstants.inputDataRecencyInterval
++        let closedLoopOn = automaticDosingStatus.automaticDosingEnabled
++
++        displayStatusLog.recordObservation(
++            closedLoopOn: closedLoopOn,
++            lastLoopCompleted: deviceManager.loopManager.lastLoopCompleted,
++            pumpOrCGMDown: pumpCritical || cgmCritical || glucoseStale || pumpDataStale
++        )
++    }
++}
++
++private extension DisplayChartStatus {
++    var bandKind: StatusBandKind {
++        switch self {
++        case .closedLoop:
++            return .closedLoop
++        case .openLoop:
++            return .openLoop
++        case .notCompleting:
++            return .notCompleting
++        }
++    }
++}
++
++/// Lets a sideways swipe move the charts without stealing vertical scrolling.
++private final class ChartHistoryPanDelegate: NSObject, UIGestureRecognizerDelegate {
++    weak var tableView: UITableView?
++
++    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
++        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let tableView = tableView else {
++            return false
++        }
++        let velocity = pan.velocity(in: tableView)
++        guard abs(velocity.x) > abs(velocity.y) else {
++            return false
++        }
++        let point = pan.location(in: tableView)
++        guard let indexPath = tableView.indexPathForRow(at: point),
++              let cell = tableView.cellForRow(at: indexPath),
++              cell is ChartTableViewCell else {
++            return false
++        }
++        return true
++    }
++
++    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
++        return false
++    }
++}
++
++private final class ChartHistoryHeaderView: UITableViewHeaderFooterView {
++    static let reuseIdentifier = "ChartHistoryHeaderView"
++
++    let label = UILabel()
++    let nowButton = UIButton(type: .system)
++
++    override init(reuseIdentifier: String?) {
++        super.init(reuseIdentifier: reuseIdentifier)
++
++        label.font = .preferredFont(forTextStyle: .footnote)
++        label.textColor = .secondaryLabel
++        label.adjustsFontSizeToFitWidth = true
++        label.minimumScaleFactor = 0.7
++        label.translatesAutoresizingMaskIntoConstraints = false
++        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
++
++        nowButton.setTitle(NSLocalizedString("Now", comment: "Button that returns the home screen charts to the current time"), for: .normal)
++        nowButton.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
++        nowButton.translatesAutoresizingMaskIntoConstraints = false
++        nowButton.accessibilityHint = NSLocalizedString("Returns the charts to the current time", comment: "Accessibility hint for the chart Now button")
++
++        contentView.addSubview(label)
++        contentView.addSubview(nowButton)
++
++        NSLayoutConstraint.activate([
++            label.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
++            label.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
++            nowButton.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
++            nowButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
++            nowButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
++        ])
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
+ }
+ 
+ // MARK: - Services delegation

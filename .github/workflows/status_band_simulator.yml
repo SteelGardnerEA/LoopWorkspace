@@ -1,0 +1,147 @@
+# Display-only check for the status-band test branch.
+# Compiles Loop for the iOS Simulator. No code signing, no Apple account, no secrets.
+# Does not upload to TestFlight or App Store Connect.
+
+name: Status band simulator check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - status-band-test
+
+concurrency:
+  group: status-band-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-simulator:
+    name: Compile for iOS Simulator
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select newest Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Installed Xcode apps:"
+          ls -d /Applications/Xcode*.app || true
+          selected=""
+          best_major=-1
+          for app in /Applications/Xcode.app /Applications/Xcode_*.app; do
+            if [ ! -d "${app}" ]; then
+              continue
+            fi
+            ver=$(defaults read "${app}/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo 0)
+            major=${ver%%.*}
+            case "${major}" in
+              ''|*[!0-9]*) major=0 ;;
+            esac
+            if [ "${major}" -gt "${best_major}" ]; then
+              best_major=${major}
+              selected=${app}
+            fi
+          done
+          if [ -z "${selected}" ] || [ ! -d "${selected}" ]; then
+            echo "No Xcode app found"
+            exit 1
+          fi
+          echo "Using ${selected}"
+          sudo xcode-select -s "${selected}/Contents/Developer"
+          xcodebuild -version
+          xcrun simctl list runtimes || true
+
+      - name: Apply chart patches
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          patches=(patches/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "No patch files in patches/"
+            exit 1
+          fi
+          for patch in "${patches[@]}"; do
+            echo "Applying ${patch}"
+            git apply "${patch}" --verbose --whitespace=fix
+          done
+
+      - name: Compile Loop (iOS Simulator, no signing)
+        id: compile
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild \
+            -workspace LoopWorkspace.xcworkspace \
+            -scheme LoopWorkspace \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            ONLY_ACTIVE_ARCH=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build \
+            | tee build/xcodebuild.log
+          status=${PIPESTATUS[0]}
+          echo "xcodebuild exit ${status}" | tee build/build-summary.txt
+          xcodebuild -version >> build/build-summary.txt
+          if [ "$status" -ne 0 ]; then
+            { grep -E 'error:|fatal error:|BUILD FAILED' build/xcodebuild.log || true; } | tail -n 80 > build/build-errors.txt
+            exit "$status"
+          fi
+          echo "BUILD SUCCEEDED" >> build/build-summary.txt
+
+      - name: Boot simulator and capture screen
+        if: success()
+        continue-on-error: true
+        run: |
+          set -u
+          mkdir -p build/screenshots
+          APP=$(find build/DerivedData -type d -path '*Debug-iphonesimulator*' -name 'Loop.app' | head -n 1 || true)
+          if [ -z "${APP}" ]; then
+            echo "Loop.app was not found. Compile succeeded but there is no simulator app to launch." | tee build/screenshots/README.txt
+            exit 0
+          fi
+          echo "App: ${APP}" | tee build/screenshots/README.txt
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist" || true)
+          echo "Bundle id: ${BUNDLE_ID}" | tee -a build/screenshots/README.txt
+
+          UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([A-F0-9-]*\)) (Shutdown)/\1/p' | head -n 1 || true)
+          if [ -z "${UDID}" ]; then
+            UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([A-F0-9-]*\)).*/\1/p' | head -n 1 || true)
+          fi
+          if [ -z "${UDID}" ]; then
+            echo "No iPhone simulator is installed." | tee -a build/screenshots/README.txt
+            exit 0
+          fi
+          echo "Simulator: ${UDID}" | tee -a build/screenshots/README.txt
+          xcrun simctl boot "${UDID}" || true
+          xcrun simctl bootstatus "${UDID}" -b || true
+          xcrun simctl install "${UDID}" "${APP}"
+          if [ -n "${BUNDLE_ID}" ]; then
+            xcrun simctl launch "${UDID}" "${BUNDLE_ID}" || true
+            sleep 12
+            xcrun simctl io "${UDID}" screenshot build/screenshots/after-launch.png
+            echo "Screenshot is the first screen after launch. Loop usually opens on setup, not the charts, until a pump and CGM are chosen." | tee -a build/screenshots/README.txt
+          fi
+
+      - name: Upload build log and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-band-simulator
+          if-no-files-found: warn
+          path: |
+            build/xcodebuild.log
+            build/build-summary.txt
+            build/build-errors.txt
+            build/screenshots/
