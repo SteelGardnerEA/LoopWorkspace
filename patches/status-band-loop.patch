@@ -36,7 +36,7 @@ index f9e6271..afd1180 100644
  				43E3449F1B9D68E900C85C07 /* StatusTableViewController.swift in Sources */,
 diff --git a/Loop/Loop/Managers/DisplayStatusLog.swift b/Loop/Loop/Managers/DisplayStatusLog.swift
 new file mode 100644
-index 0000000..af9f620
+index 0000000..c4d6788
 --- /dev/null
 +++ b/Loop/Loop/Managers/DisplayStatusLog.swift
 @@ -0,0 +1,263 @@
@@ -196,12 +196,12 @@ index 0000000..af9f620
 +            let status: DisplayChartStatus
 +            if let lastObservedAt = lastObservedAt, segmentStart >= lastObservedAt {
 +                if observingNow {
-+                    status = status(at: lastObservedAt, entries: sorted)
++                    status = loggedStatus(at: lastObservedAt, entries: sorted)
 +                } else {
 +                    status = .notCompleting
 +                }
 +            } else {
-+                status = status(at: segmentStart, entries: sorted)
++                status = loggedStatus(at: segmentStart, entries: sorted)
 +            }
 +
 +            if let previous = result.last, previous.status == status, previous.end == segmentStart {
@@ -225,7 +225,7 @@ index 0000000..af9f620
 +        return true
 +    }
 +
-+    private func status(at date: Date, entries: [Entry]) -> DisplayChartStatus {
++    private func loggedStatus(at date: Date, entries: [Entry]) -> DisplayChartStatus {
 +        var current: DisplayChartStatus = .notCompleting
 +        for entry in entries {
 +            if entry.date <= date {
