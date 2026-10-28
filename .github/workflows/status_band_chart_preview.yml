@@ -144,10 +144,17 @@ jobs:
             exit 0
           fi
           # Opens the chart-color preview. Does not start a normal Loop session.
-          xcrun simctl launch "${UDID}" "${BUNDLE_ID}" -LoopStatusBandPreview || echo "Launch failed." | tee -a build/screenshots/README.txt
-          sleep 12
+          xcrun simctl launch --console "${UDID}" "${BUNDLE_ID}" -LoopStatusBandPreview > build/screenshots/console.txt 2>&1 &
+          LAUNCH_PID=$!
+          sleep 8
           xcrun simctl io "${UDID}" screenshot build/screenshots/chart-colors.png || echo "Screenshot failed." | tee -a build/screenshots/README.txt
-          echo "chart-colors.png is a test screen of the real chart drawing: red, blue stripes, green, and a Now button. The normal app still opens on setup until a pump and CGM are chosen." | tee -a build/screenshots/README.txt
+          sleep 6
+          xcrun simctl io "${UDID}" screenshot build/screenshots/chart-colors-later.png || true
+          kill "${LAUNCH_PID}" >/dev/null 2>&1 || true
+          xcrun simctl spawn "${UDID}" log show --last 3m --style compact --predicate 'processImagePath CONTAINS "Loop" OR eventMessage CONTAINS "StatusBandPreview"' > build/screenshots/device-log.txt || true
+          mkdir -p build/screenshots/crashes
+          find "${HOME}/Library/Logs/DiagnosticReports" -name '*Loop*' -mmin -15 -exec cp {} build/screenshots/crashes/ \; || true
+          echo "chart-colors.png is a test screen of the real chart drawing when the preview stays open." | tee -a build/screenshots/README.txt
 
       - name: Upload build log and screenshots
         if: always()

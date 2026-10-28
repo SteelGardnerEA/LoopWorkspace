@@ -353,16 +353,17 @@ index 79ec51a..ca78821 100644
 +    }
 +}
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index eea0299..6f740f0 100644
+index eea0299..14318bf 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
-@@ -34,6 +34,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+@@ -34,6 +34,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
              window.makeKeyAndVisible()
          }
  
 +        // Simulator screenshots only. A normal launch never passes this argument,
 +        // and this path returns before Loop is started, so it does not dose.
 +        if ProcessInfo.processInfo.arguments.contains("-LoopStatusBandPreview") {
++            NSLog("StatusBandPreview launch")
 +            window?.rootViewController = StatusBandPreviewController()
 +            window?.makeKeyAndVisible()
 +            return
@@ -373,10 +374,10 @@ index eea0299..6f740f0 100644
          let launchOptions = (UIApplication.shared.delegate as? AppDelegate)?.launchOptions
 diff --git a/Loop/Loop/View Controllers/StatusBandPreviewController.swift b/Loop/Loop/View Controllers/StatusBandPreviewController.swift
 new file mode 100644
-index 0000000..3c2c14c
+index 0000000..c66c986
 --- /dev/null
 +++ b/Loop/Loop/View Controllers/StatusBandPreviewController.swift	
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,135 @@
 +//
 +//  StatusBandPreviewController.swift
 +//  Loop
@@ -404,6 +405,7 @@ index 0000000..3c2c14c
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
 +        view.backgroundColor = .systemBackground
++        NSLog("StatusBandPreview viewDidLoad")
 +
 +        header.backgroundColor = .secondarySystemBackground
 +        titleLabel.font = .preferredFont(forTextStyle: .footnote)
@@ -454,7 +456,10 @@ index 0000000..3c2c14c
 +            return
 +        }
 +        didRender = true
-+        renderCharts()
++        NSLog("StatusBandPreview scheduling charts")
++        DispatchQueue.main.async { [weak self] in
++            self?.renderCharts()
++        }
 +    }
 +
 +    private func renderCharts() {
@@ -491,6 +496,7 @@ index 0000000..3c2c14c
 +        chartsManager.setCOBValues(carbs)
 +        chartsManager.setDoseEntries([])
 +        chartsManager.prerender()
++        NSLog("StatusBandPreview drawing charts")
 +
 +        let frames: [(CGRect) -> UIView?] = [
 +            { self.chartsManager.glucoseChart(withFrame: $0)?.view },
