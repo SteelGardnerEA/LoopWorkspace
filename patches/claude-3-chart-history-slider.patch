@@ -1,0 +1,573 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 6d00858..f4508e6 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -127,13 +127,27 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ 
+ 
+ #if DEBUG
+-/// Debug-only screen for simulator screenshots. Shows the four main-screen charts with
+-/// made-up data. The loop status background goes through the same `LoopStatusTimeline`
+-/// code the real main screen uses. Nothing here starts Loop or touches insulin.
++/// Debug-only screen for simulator screenshots. Shows the main-screen charts with
++/// made-up data covering 7 days. The loop status background goes through the same
++/// `LoopStatusTimeline` code the real main screen uses. Nothing here starts Loop or
++/// touches insulin. Launch with `-ClaudeChartPreviewHoursBack 60` to show the charts
++/// scrolled back 60 hours.
+ final class ChartPreviewViewController: UIViewController {
+     private lazy var charts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
++    private let scrubber = ChartHistoryScrubberView(frame: .zero)
+     private var placedViews: [UIView] = []
+ 
++    private let historyHours: Double = 6
++    private let totalHours: Double = 9
++
++    private var hoursBack: Double {
++        let arguments = ProcessInfo.processInfo.arguments
++        guard let index = arguments.firstIndex(of: "-ClaudeChartPreviewHoursBack"), index + 1 < arguments.count else {
++            return 0
++        }
++        return Double(arguments[index + 1]) ?? 0
++    }
++
+     override func viewDidLoad() {
+         super.viewDidLoad()
+         view.backgroundColor = .systemBackground
+@@ -180,19 +194,38 @@ final class ChartPreviewViewController: UIViewController {
+             }
+             y += row.2 + 10
+         }
++
++        scrubber.frame = CGRect(x: area.minX - 8, y: y, width: area.width + 16, height: ChartHistoryScrubberView.preferredHeight)
++        view.addSubview(scrubber)
++        placedViews.append(scrubber)
+     }
+ 
+     private func loadSampleData() {
+         let now = Date()
+-        let hourAgo6 = now.addingTimeInterval(.hours(-6))
+-        let start = Calendar.current.nextDate(after: hourAgo6, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? hourAgo6
++        let offset = TimeInterval.hours(hoursBack)
++        let windowStartRaw = now.addingTimeInterval(.hours(-historyHours) - offset)
++        let start = Calendar.current.nextDate(after: windowStartRaw, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? windowStartRaw
++        let windowEnd = start.addingTimeInterval(.hours(totalHours))
++        let historyEnd: Date? = offset > 0 ? windowEnd : nil
++        let dataEnd = min(now, historyEnd ?? now)
++
+         charts.startDate = start
+-        charts.maxEndDate = start.addingTimeInterval(.hours(9))
++        charts.maxEndDate = windowEnd
+         charts.updateEndDate(charts.maxEndDate)
+ 
++        scrubber.maximumOffset = .days(7) - .hours(historyHours)
++        scrubber.setOffset(offset)
++        if offset > 0 {
++            scrubber.setWindow(start: start, end: windowEnd)
++        }
++
+         let fiveMinutes = TimeInterval.minutes(5)
+-        let pastTimes = stride(from: start.timeIntervalSince1970, through: now.timeIntervalSince1970, by: fiveMinutes).map { Date(timeIntervalSince1970: $0) }
+-        let futureTimes = stride(from: now.timeIntervalSince1970, through: now.addingTimeInterval(.hours(3)).timeIntervalSince1970, by: fiveMinutes).map { Date(timeIntervalSince1970: $0) }
++        func times(from: Date, through: Date) -> [Date] {
++            guard through >= from else { return [] }
++            return stride(from: from.timeIntervalSince1970, through: through.timeIntervalSince1970, by: fiveMinutes).map { Date(timeIntervalSince1970: $0) }
++        }
++        let pastTimes = times(from: start, through: dataEnd)
++        let futureTimes = historyEnd == nil ? times(from: now, through: now.addingTimeInterval(.hours(3))) : []
+ 
+         func wave(_ date: Date, period: TimeInterval) -> Double {
+             sin(date.timeIntervalSince1970 / period * 2 * .pi)
+@@ -202,11 +235,15 @@ final class ChartPreviewViewController: UIViewController {
+             SimpleGlucoseValue(startDate: $0, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 130 + 45 * wave($0, period: .hours(4))))
+         }
+         charts.setGlucoseValues(glucose)
+-        let lastGlucose = glucose.last?.quantity.doubleValue(for: .milligramsPerDeciliter) ?? 120
+-        let predicted = futureTimes.enumerated().map { index, date in
+-            SimpleGlucoseValue(startDate: date, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 110 + (lastGlucose - 110) * exp(-Double(index) / 12)))
++        if historyEnd == nil {
++            let lastGlucose = glucose.last?.quantity.doubleValue(for: .milligramsPerDeciliter) ?? 120
++            let predicted = futureTimes.enumerated().map { index, date in
++                SimpleGlucoseValue(startDate: date, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 110 + (lastGlucose - 110) * exp(-Double(index) / 12)))
++            }
++            charts.setPredictedGlucoseValues(predicted)
++        } else {
++            charts.setPredictedGlucoseValues([])
+         }
+-        charts.setPredictedGlucoseValues(predicted)
+ 
+         charts.setIOBValues((pastTimes + futureTimes).map { InsulinValue(startDate: $0, value: max(0, 1.4 + 1.1 * wave($0, period: .hours(5)))) })
+         charts.setCOBValues((pastTimes + futureTimes).map { CarbValue(startDate: $0, value: max(0, 18 * wave($0, period: .hours(7)))) })
+@@ -214,20 +251,33 @@ final class ChartPreviewViewController: UIViewController {
+         let unitsPerHour = HKUnit.internationalUnit().unitDivided(by: .hour())
+         var doses: [DoseEntry] = []
+         for (index, date) in pastTimes.enumerated() where index % 6 == 0 {
+-            doses.append(DoseEntry(type: .tempBasal, startDate: date, endDate: date.addingTimeInterval(.minutes(30)), value: max(0, 0.9 + 0.7 * wave(date, period: .hours(3))), unit: .unitsPerHour, scheduledBasalRate: HKQuantity(unit: unitsPerHour, doubleValue: 0.8)))
++            let end = min(date.addingTimeInterval(.minutes(30)), dataEnd)
++            guard end > date else { continue }
++            doses.append(DoseEntry(type: .tempBasal, startDate: date, endDate: end, value: max(0, 0.9 + 0.7 * wave(date, period: .hours(3))), unit: .unitsPerHour, scheduledBasalRate: HKQuantity(unit: unitsPerHour, doubleValue: 0.8)))
++        }
++        for hoursAgo in [4.5, 62.5] {
++            let date = now.addingTimeInterval(.hours(-hoursAgo))
++            if date >= start && date <= dataEnd {
++                doses.append(DoseEntry(type: .bolus, startDate: date, value: 3, unit: .units))
++            }
+         }
+-        doses.append(DoseEntry(type: .bolus, startDate: now.addingTimeInterval(.hours(-4.5)), value: 3, unit: .units))
+         charts.setDoseEntries(doses)
+ 
+-        // Made-up loop history: one missed reading 4 hours ago (stays green), a 50 minute
+-        // outage about 2.5 hours ago (red), and automatic dosing off for 35 minutes (gray).
+-        let outage = DateInterval(start: now.addingTimeInterval(.minutes(-180)), end: now.addingTimeInterval(.minutes(-130)))
++        // Made-up loop history over 7 days: one missed reading 4 hours ago (stays green),
++        // outages 2.5 hours and about 2.5 days ago (red), and automatic dosing off for
++        // 35 minutes recently and for an hour about 2.4 days ago (gray).
++        let outages = [
++            DateInterval(start: now.addingTimeInterval(.minutes(-180)), end: now.addingTimeInterval(.minutes(-130))),
++            DateInterval(start: now.addingTimeInterval(.hours(-62)), end: now.addingTimeInterval(.hours(-60)))
++        ]
+         let missedReading = now.addingTimeInterval(.minutes(-240))
+-        let loopDates = pastTimes.filter { date in
+-            !outage.contains(date) && abs(date.timeIntervalSince(missedReading)) > .minutes(2.5)
++        let loopDates = times(from: now.addingTimeInterval(.days(-7)), through: now).filter { date in
++            !outages.contains { $0.contains(date) } && abs(date.timeIntervalSince(missedReading)) > .minutes(2.5)
+         }
+         let changes = [
+-            AutomaticDosingChange(date: now.addingTimeInterval(.hours(-8)), enabled: true),
++            AutomaticDosingChange(date: now.addingTimeInterval(.days(-7)), enabled: true),
++            AutomaticDosingChange(date: now.addingTimeInterval(.hours(-58)), enabled: false),
++            AutomaticDosingChange(date: now.addingTimeInterval(.hours(-57)), enabled: true),
+             AutomaticDosingChange(date: now.addingTimeInterval(.minutes(-80)), enabled: false),
+             AutomaticDosingChange(date: now.addingTimeInterval(.minutes(-45)), enabled: true)
+         ]
+@@ -236,7 +286,7 @@ final class ChartPreviewViewController: UIViewController {
+             automaticDosingChanges: changes,
+             currentAutomaticDosingEnabled: true,
+             start: start,
+-            now: now
++            now: dataEnd
+         ))
+     }
+ }
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 5460f8d..9f8a8e4 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -145,7 +145,18 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         addScenarioStepGestureRecognizers()
+ 
+         tableView.backgroundColor = .secondarySystemBackground
+-    
++
++        // Chart history slider sits under the charts.
++        tableView.tableFooterView = chartHistoryScrubber
++
++        // Coming back to the app always shows now, so a scrolled-back chart is never mistaken for current data.
++        NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
++            .receive(on: RunLoop.main)
++            .sink { [weak self] _ in
++                self?.chartHistoryScrubber.setOffset(0)
++                self?.chartHistoryOffsetDidChange(0)
++            }
++            .store(in: &cancellables)
+     }
+ 
+     override func didReceiveMemoryWarning() {
+@@ -386,6 +397,29 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     
+     private lazy var statusCharts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
+ 
++    /// How far back the charts are scrolled. Zero means now. Display only.
++    private var chartHistoryOffset: TimeInterval = 0
++
++    /// Loop keeps 7 days of history, so the charts can look back that far.
++    private static let chartHistoryLimit: TimeInterval = .days(7)
++
++    private lazy var chartHistoryScrubber: ChartHistoryScrubberView = {
++        let scrubber = ChartHistoryScrubberView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: ChartHistoryScrubberView.preferredHeight))
++        scrubber.onChange = { [weak self] offset in
++            self?.chartHistoryOffsetDidChange(offset)
++        }
++        return scrubber
++    }()
++
++    private func chartHistoryOffsetDidChange(_ offset: TimeInterval) {
++        guard offset != chartHistoryOffset else {
++            return
++        }
++        chartHistoryOffset = offset
++        refreshContext.formUnion(RefreshContext.all)
++        reloadData(animated: false)
++    }
++
+     override func createChartsManager() -> ChartsManager {
+         return statusCharts
+     }
+@@ -398,7 +432,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         let futureHours = ceil(deviceManager.doseStore.longestEffectDuration.hours)
+         let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
+ 
+-        let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours))
++        // The slider can move the window back until its left edge reaches the oldest saved history.
++        let maximumOffset = max(0, Self.chartHistoryLimit - .hours(historyHours))
++        chartHistoryScrubber.maximumOffset = maximumOffset
++        chartHistoryOffset = min(chartHistoryOffset, maximumOffset)
++
++        let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours) - chartHistoryOffset)
+         let chartStartDate = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
+         if charts.startDate != chartStartDate {
+             refreshContext.formUnion(RefreshContext.all)
+@@ -406,6 +445,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         charts.startDate = chartStartDate
+         charts.maxEndDate = chartStartDate.addingTimeInterval(.hours(totalHours))
+         charts.updateEndDate(charts.maxEndDate)
++
++        if chartHistoryOffset > 0 {
++            chartHistoryScrubber.setWindow(start: chartStartDate, end: charts.maxEndDate)
++        }
+     }
+ 
+     override func reloadData(animated: Bool = false) {
+@@ -456,6 +499,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         var cobValues: [CarbValue]?
+         var carbsOnBoard: HKQuantity?
+         let startDate = charts.startDate
++        // When scrolled back, only fetch the visible window so nothing is drawn past its right edge.
++        let historyEndDate: Date? = chartHistoryOffset > 0 ? charts.maxEndDate : nil
+         let basalDeliveryState = self.basalDeliveryState
+         let automaticDosingEnabled = automaticDosingStatus.automaticDosingEnabled
+ 
+@@ -491,7 +536,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+             if currentContext.contains(.carbs) {
+                 reloadGroup.enter()
+-                self.deviceManager.carbStore.getCarbsOnBoardValues(start: startDate, end: nil, effectVelocities: state.insulinCounteractionEffects) { (result) in
++                self.deviceManager.carbStore.getCarbsOnBoardValues(start: startDate, end: historyEndDate, effectVelocities: state.insulinCounteractionEffects) { (result) in
+                     switch result {
+                     case .failure(let error):
+                         self.log.error("CarbStore failed to get carbs on board values: %{public}@", String(describing: error))
+@@ -511,7 +556,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         if currentContext.contains(.glucose) {
+             reloadGroup.enter()
+-            deviceManager.glucoseStore.getGlucoseSamples(start: startDate, end: nil) { (result) -> Void in
++            deviceManager.glucoseStore.getGlucoseSamples(start: startDate, end: historyEndDate) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("Failure getting glucose samples: %{public}@", String(describing: error))
+@@ -526,14 +571,14 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         // Loop status background (display only)
+         var loopStatusPeriods: [LoopStatusPeriod]?
+         reloadGroup.enter()
+-        fetchLoopStatusPeriods(start: startDate) { periods in
++        fetchLoopStatusPeriods(start: startDate, end: historyEndDate) { periods in
+             loopStatusPeriods = periods
+             reloadGroup.leave()
+         }
+ 
+         if currentContext.contains(.insulin) {
+             reloadGroup.enter()
+-            deviceManager.doseStore.getInsulinOnBoardValues(start: startDate, end: nil, basalDosingEnd: nil) { (result) -> Void in
++            deviceManager.doseStore.getInsulinOnBoardValues(start: startDate, end: historyEndDate, basalDosingEnd: nil) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("DoseStore failed to get insulin on board values: %{public}@", String(describing: error))
+@@ -546,14 +591,18 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+ 
+             reloadGroup.enter()
+-            deviceManager.doseStore.getNormalizedDoseEntries(start: startDate, end: nil) { (result) -> Void in
++            deviceManager.doseStore.getNormalizedDoseEntries(start: startDate, end: historyEndDate) { (result) -> Void in
+                 switch result {
+                 case .failure(let error):
+                     self.log.error("DoseStore failed to get normalized dose entries: %{public}@", String(describing: error))
+                     retryContext.update(with: .insulin)
+                     doseEntries = []
+                 case .success(let doses):
+-                    doseEntries = doses
++                    if let historyEndDate = historyEndDate {
++                        doseEntries = doses.map { $0.endDate > historyEndDate ? $0.trimmed(to: historyEndDate) : $0 }
++                    } else {
++                        doseEntries = doses
++                    }
+                 }
+                 reloadGroup.leave()
+             }
+@@ -593,7 +642,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             if let glucoseSamples = glucoseSamples {
+                 self.statusCharts.setGlucoseValues(glucoseSamples)
+             }
+-            if (automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled), let predictedGlucoseValues = predictedGlucoseValues {
++            if historyEndDate == nil, (automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled), let predictedGlucoseValues = predictedGlucoseValues {
+                 self.statusCharts.setPredictedGlucoseValues(predictedGlucoseValues)
+             } else {
+                 self.statusCharts.setPredictedGlucoseValues([])
+@@ -2274,7 +2323,7 @@ extension StatusTableViewController {
+     /// Works out when Loop was running, not running, or had automatic dosing turned off,
+     /// from Loop's saved cycle records and settings history. Reads only; changes nothing.
+     /// Calls `completion` on the main queue with nil if the history could not be read.
+-    fileprivate func fetchLoopStatusPeriods(start: Date, completion: @escaping ([LoopStatusPeriod]?) -> Void) {
++    fileprivate func fetchLoopStatusPeriods(start: Date, end: Date? = nil, completion: @escaping ([LoopStatusPeriod]?) -> Void) {
+         let dosingDecisionStore = deviceManager.dosingDecisionStore
+         let settingsStore = deviceManager.settingsManager.settingsStore
+         let lastLoopCompleted = deviceManager.loopManager.lastLoopCompleted
+@@ -2283,7 +2332,11 @@ extension StatusTableViewController {
+ 
+         Task { @MainActor in
+             do {
+-                let decisions = try await dosingDecisionStore.getDosingDecisions(start: start.addingTimeInterval(-LoopStatusTimeline.missedLoopThreshold))
++                // A little extra on each side so a gap crossing the window edge is judged correctly.
++                let decisions = try await dosingDecisionStore.getDosingDecisions(
++                    start: start.addingTimeInterval(-LoopStatusTimeline.missedLoopThreshold),
++                    end: end?.addingTimeInterval(LoopStatusTimeline.missedLoopThreshold)
++                )
+                 var loopDates = decisions.filter { $0.reason == "loop" && $0.errors.isEmpty }.map { $0.date }
+                 if let lastLoopCompleted = lastLoopCompleted {
+                     loopDates.append(lastLoopCompleted)
+@@ -2297,7 +2350,7 @@ extension StatusTableViewController {
+                     automaticDosingChanges: changes,
+                     currentAutomaticDosingEnabled: currentDosingEnabled,
+                     start: start,
+-                    now: Date()
++                    now: min(Date(), end ?? Date())
+                 ))
+             } catch {
+                 log.error("Could not read loop history for the status background: %{public}@", String(describing: error))
+diff --git a/LoopKit/LoopKit.xcodeproj/project.pbxproj b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+index b07f656..c43169d 100644
+--- a/LoopKit/LoopKit.xcodeproj/project.pbxproj
++++ b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+@@ -536,6 +536,7 @@
+ 		A9D3FEFF2A6C1944000C891D /* DoseChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEF92A6C1942000C891D /* DoseChart.swift */; };
+ 		A9D3FF002A6C1944000C891D /* ChartConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */; };
+ 		C1A0DE5A0000000000000001 /* LoopStatusBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */; };
++		C1A0DE5A0000000000000003 /* ChartHistoryScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */; };
+ 		A9D3FF012A6C1944000C891D /* CarbEffectChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */; };
+ 		A9D3FF022A6C1944000C891D /* COBChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFC2A6C1943000C891D /* COBChart.swift */; };
+ 		A9D3FF032A6C1944000C891D /* IOBChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFD2A6C1943000C891D /* IOBChart.swift */; };
+@@ -1580,6 +1581,7 @@
+ 		A9D3FEF92A6C1942000C891D /* DoseChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DoseChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartConstants.swift; sourceTree = "<group>"; };
+ 		C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoopStatusBackground.swift; sourceTree = "<group>"; };
++		C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartHistoryScrubberView.swift; sourceTree = "<group>"; };
+ 		A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CarbEffectChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFC2A6C1943000C891D /* COBChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = COBChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFD2A6C1943000C891D /* IOBChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IOBChart.swift; sourceTree = "<group>"; };
+@@ -3166,6 +3168,7 @@
+ 				A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */,
+ 				A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */,
+ 				C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */,
++				C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */,
+ 				A9D3FEFC2A6C1943000C891D /* COBChart.swift */,
+ 				A9D3FEF92A6C1942000C891D /* DoseChart.swift */,
+ 				E9086B4424B53CC50062F5C8 /* GlucoseChart.swift */,
+@@ -4055,6 +4058,7 @@
+ 				B455F3A425FF7FF0000ED456 /* CorrectionRangeOverridesEditorViewModel.swift in Sources */,
+ 				A9D3FF002A6C1944000C891D /* ChartConstants.swift in Sources */,
+ 				C1A0DE5A0000000000000001 /* LoopStatusBackground.swift in Sources */,
++				C1A0DE5A0000000000000003 /* ChartHistoryScrubberView.swift in Sources */,
+ 				89BE75CB2464BC2000B145D9 /* AlertContent.swift in Sources */,
+ 				43BA7184201EE7090058961E /* TextFieldTableViewController.swift in Sources */,
+ 				1452F4B22A8521CD00F8B9E4 /* TextFieldRow.swift in Sources */,
+diff --git a/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift b/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift
+new file mode 100644
+index 0000000..1f8aaa4
+--- /dev/null
++++ b/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift
+@@ -0,0 +1,197 @@
++//
++//  ChartHistoryScrubberView.swift
++//  LoopKitUI
++//
++//  Display only. A slider under the main-screen charts that moves all of them
++//  back in time together, with a button to return to now.
++//
++
++import Foundation
++import LoopKit
++import UIKit
++
++public final class ChartHistoryScrubberView: UIView {
++
++    public static let preferredHeight: CGFloat = 92
++
++    /// Called with the new offset (how far back the charts should look) when the
++    /// slider is released or "Back to now" is tapped.
++    public var onChange: ((TimeInterval) -> Void)?
++
++    /// The furthest back the slider can go.
++    public var maximumOffset: TimeInterval = .hours(24 * 7) {
++        didSet {
++            if offset > maximumOffset {
++                setOffset(maximumOffset)
++            } else {
++                updateSlider()
++            }
++            updateHints()
++        }
++    }
++
++    /// How far back the charts currently look. Zero means now.
++    public private(set) var offset: TimeInterval = 0
++
++    private let slider = UISlider()
++    private let titleLabel = UILabel()
++    private let nowButton = UIButton(type: .system)
++    private let oldestHint = UILabel()
++    private let newestHint = UILabel()
++
++    private static let step: TimeInterval = .minutes(15)
++
++    private lazy var agoFormatter: DateComponentsFormatter = {
++        let formatter = DateComponentsFormatter()
++        formatter.unitsStyle = .full
++        formatter.allowedUnits = [.day, .hour, .minute]
++        formatter.maximumUnitCount = 2
++        return formatter
++    }()
++
++    private lazy var windowFormatter: DateIntervalFormatter = {
++        let formatter = DateIntervalFormatter()
++        formatter.dateTemplate = "EEEMMMdjmm"
++        return formatter
++    }()
++
++    public override init(frame: CGRect) {
++        super.init(frame: frame)
++        setUp()
++    }
++
++    public required init?(coder: NSCoder) {
++        super.init(coder: coder)
++        setUp()
++    }
++
++    private func setUp() {
++        backgroundColor = .clear
++
++        titleLabel.font = .preferredFont(forTextStyle: .footnote)
++        titleLabel.textColor = .secondaryLabel
++        titleLabel.adjustsFontSizeToFitWidth = true
++        titleLabel.minimumScaleFactor = 0.8
++        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
++        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
++
++        nowButton.setTitle(LocalizedString("Back to now", comment: "Button that returns the main-screen charts to the current time"), for: .normal)
++        nowButton.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
++        nowButton.setContentHuggingPriority(.required, for: .horizontal)
++        nowButton.setContentCompressionResistancePriority(.required, for: .horizontal)
++        nowButton.addTarget(self, action: #selector(returnToNow), for: .touchUpInside)
++
++        // Left end is the oldest history, right end is now.
++        slider.minimumValue = 0
++        slider.maximumValue = 1
++        slider.value = 1
++        slider.addTarget(self, action: #selector(sliderMoved), for: .valueChanged)
++        slider.addTarget(self, action: #selector(sliderReleased), for: [.touchUpInside, .touchUpOutside, .touchCancel])
++        slider.accessibilityLabel = LocalizedString("Chart history", comment: "Accessibility label for the chart history slider")
++
++        for hint in [oldestHint, newestHint] {
++            hint.font = .preferredFont(forTextStyle: .caption2)
++            hint.textColor = .tertiaryLabel
++        }
++        newestHint.text = LocalizedString("Now", comment: "Right end of the chart history slider")
++        newestHint.textAlignment = .right
++
++        let topRow = UIStackView(arrangedSubviews: [titleLabel, nowButton])
++        topRow.axis = .horizontal
++        topRow.spacing = 8
++        topRow.alignment = .center
++
++        let hintsRow = UIStackView(arrangedSubviews: [oldestHint, newestHint])
++        hintsRow.axis = .horizontal
++        hintsRow.distribution = .fillEqually
++
++        let stack = UIStackView(arrangedSubviews: [topRow, slider, hintsRow])
++        stack.axis = .vertical
++        stack.spacing = 2
++        stack.translatesAutoresizingMaskIntoConstraints = false
++        addSubview(stack)
++
++        NSLayoutConstraint.activate([
++            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
++            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
++            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
++            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6)
++        ])
++
++        updateHints()
++        updateTitle(window: nil)
++    }
++
++    /// Moves the slider. Calls `onChange` only when `notify` is true.
++    public func setOffset(_ newOffset: TimeInterval, notify: Bool = false) {
++        offset = Self.rounded(min(max(0, newOffset), maximumOffset))
++        updateSlider()
++        nowButton.isEnabled = offset > 0
++        if notify {
++            onChange?(offset)
++        }
++    }
++
++    /// Shows the time range the charts are displaying.
++    public func setWindow(start: Date, end: Date) {
++        updateTitle(window: DateInterval(start: start, end: max(start, end)))
++    }
++
++    private func updateSlider() {
++        guard maximumOffset > 0 else {
++            slider.value = 1
++            return
++        }
++        slider.value = Float(1 - offset / maximumOffset)
++    }
++
++    private func updateHints() {
++        oldestHint.text = String(
++            format: LocalizedString("%@ ago", comment: "Left end of the chart history slider. (1: how long ago)"),
++            agoFormatter.string(from: maximumOffset) ?? ""
++        )
++    }
++
++    private func updateTitle(window: DateInterval?) {
++        if offset == 0 {
++            titleLabel.text = LocalizedString("Showing now. Drag to look back.", comment: "Chart history slider title when showing the current time")
++        } else if let window = window {
++            titleLabel.text = windowFormatter.string(from: window.start, to: window.end)
++        } else {
++            titleLabel.text = agoDescription(offset)
++        }
++        nowButton.isEnabled = offset > 0
++    }
++
++    private func agoDescription(_ offset: TimeInterval) -> String {
++        guard offset > 0 else {
++            return LocalizedString("Now", comment: "Right end of the chart history slider")
++        }
++        return String(
++            format: LocalizedString("%@ ago", comment: "Left end of the chart history slider. (1: how long ago)"),
++            agoFormatter.string(from: offset) ?? ""
++        )
++    }
++
++    private func offsetForSlider() -> TimeInterval {
++        return Self.rounded(TimeInterval(1 - slider.value) * maximumOffset)
++    }
++
++    private static func rounded(_ offset: TimeInterval) -> TimeInterval {
++        return (offset / step).rounded() * step
++    }
++
++    @objc private func sliderMoved() {
++        titleLabel.text = agoDescription(offsetForSlider())
++    }
++
++    @objc private func sliderReleased() {
++        setOffset(offsetForSlider(), notify: true)
++        updateTitle(window: nil)
++    }
++
++    @objc private func returnToNow() {
++        setOffset(0, notify: true)
++        updateTitle(window: nil)
++    }
++}
