@@ -402,10 +402,10 @@ index eea0299..66bec4d 100644
      }
 diff --git a/Loop/Loop/View Controllers/StatusBandPreviewController.swift b/Loop/Loop/View Controllers/StatusBandPreviewController.swift
 new file mode 100644
-index 0000000..c66c986
+index 0000000..c5ae200
 --- /dev/null
 +++ b/Loop/Loop/View Controllers/StatusBandPreviewController.swift	
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,158 @@
 +//
 +//  StatusBandPreviewController.swift
 +//  Loop
@@ -427,8 +427,10 @@ index 0000000..c66c986
 +    private let header = UIView()
 +    private let titleLabel = UILabel()
 +    private let nowButton = UIButton(type: .system)
++    private let scrubber = ChartHistoryScrubberView(reuseIdentifier: nil)
 +    private var chartHosts: [UIView] = []
 +    private var didRender = false
++    private let daysBack = StatusBandPreviewController.previewDaysBack()
 +
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
@@ -447,6 +449,10 @@ index 0000000..c66c986
 +        header.addSubview(titleLabel)
 +        header.addSubview(nowButton)
 +        view.addSubview(header)
++
++        scrubber.slider.value = Float(1 - min(1, daysBack / 7))
++        scrubber.slider.accessibilityIdentifier = "ChartHistorySlider"
++        view.addSubview(scrubber)
 +
 +        for name in ["Glucose", "Active Insulin", "Insulin Delivery", "Active Carbohydrates"] {
 +            let host = UIView()
@@ -472,7 +478,9 @@ index 0000000..c66c986
 +        titleLabel.frame = CGRect(x: 16, y: 0, width: nowButton.frame.minX - 24, height: headerHeight)
 +
 +        let top = header.frame.maxY
-+        let chartHeight = max(80, (view.bounds.height - top - view.safeAreaInsets.bottom) / CGFloat(chartHosts.count))
++        let scrubberHeight: CGFloat = 88
++        scrubber.frame = CGRect(x: 0, y: view.bounds.height - view.safeAreaInsets.bottom - scrubberHeight, width: view.bounds.width, height: scrubberHeight)
++        let chartHeight = max(70, (scrubber.frame.minY - top) / CGFloat(chartHosts.count))
 +        for (index, host) in chartHosts.enumerated() {
 +            host.frame = CGRect(x: 0, y: top + CGFloat(index) * chartHeight, width: view.bounds.width, height: chartHeight)
 +            if let label = host.viewWithTag(1) {
@@ -492,8 +500,13 @@ index 0000000..c66c986
 +
 +    private func renderCharts() {
 +        let now = Date()
-+        let start = now.addingTimeInterval(.hours(-4))
-+        let end = now.addingTimeInterval(.hours(2))
++        let shift = TimeInterval(days: daysBack)
++        let start = now.addingTimeInterval(.hours(-4) - shift)
++        let end = now.addingTimeInterval(.hours(2) - shift)
++        let formatter = DateIntervalFormatter()
++        formatter.dateStyle = daysBack > 0.8 ? .medium : .none
++        formatter.timeStyle = .short
++        scrubber.rangeLabel.text = formatter.string(from: start, to: end)
 +        chartsManager.startDate = start
 +        chartsManager.maxEndDate = end
 +        chartsManager.updateEndDate(end)
@@ -511,7 +524,7 @@ index 0000000..c66c986
 +        var carbs: [CarbValue] = []
 +        var cursor = start
 +        var index = 0
-+        while cursor <= now {
++        while cursor <= min(now, end) {
 +            let mgdl = 150 + 25 * sin(Double(index) / 3)
 +            glucose.append(SimpleGlucoseValue(startDate: cursor, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: mgdl)))
 +            insulin.append(InsulinValue(startDate: cursor, value: max(0, 1.2 + 0.4 * sin(Double(index) / 4))))
@@ -540,9 +553,19 @@ index 0000000..c66c986
 +            }
 +        }
 +    }
++
++    private static func previewDaysBack() -> Double {
++        let args = ProcessInfo.processInfo.arguments
++        guard let flag = args.firstIndex(of: "-LoopStatusBandPreviewDays"),
++              flag + 1 < args.count,
++              let days = Double(args[flag + 1]) else {
++            return 0
++        }
++        return min(7, max(0, days))
++    }
 +}
 diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
-index 580d67e..6845968 100644
+index 580d67e..e535683 100644
 --- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
 +++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
 @@ -145,7 +145,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
@@ -555,7 +578,7 @@ index 580d67e..6845968 100644
      }
  
      override func didReceiveMemoryWarning() {
-@@ -359,6 +360,20 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -359,6 +360,21 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
      private var refreshContext = RefreshContext.all
  
@@ -567,7 +590,8 @@ index 580d67e..6845968 100644
 +
 +    private let displayStatusLog = DisplayStatusLog()
 +
-+    private let chartHistoryPanDelegate = ChartHistoryPanDelegate()
++    /// Furthest the slider can move the window back from the live start. About 7 days.
++    private var maximumChartHistoryOffset: TimeInterval = .days(7)
 +
 +    private var chartHistoryReloadWork: DispatchWorkItem?
 +
@@ -576,7 +600,7 @@ index 580d67e..6845968 100644
      private var shouldShowHUD: Bool {
          return !landscapeMode
      }
-@@ -392,6 +407,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -392,6 +408,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
      private func updateChartDateRange() {
          // How far back should we show data? Use the screen size as a guide.
@@ -585,7 +609,7 @@ index 580d67e..6845968 100644
          let availableWidth = (refreshContext.newSize ?? tableView.bounds.size).width - charts.fixedHorizontalMargin
  
          let totalHours = floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour))
-@@ -399,13 +416,34 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -399,13 +417,38 @@ final class StatusTableViewController: LoopChartsTableViewController {
          let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
  
          let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours))
@@ -593,8 +617,12 @@ index 580d67e..6845968 100644
 +        let liveStart = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
 +
 +        let earliestStart = Date().addingTimeInterval(-Bundle.main.localCacheDuration)
++        maximumChartHistoryOffset = max(0, liveStart.timeIntervalSince(earliestStart))
 +        if chartHistoryOffset < 0 {
 +            chartHistoryOffset = 0
++        }
++        if chartHistoryOffset > maximumChartHistoryOffset {
++            chartHistoryOffset = maximumChartHistoryOffset
 +        }
 +        var chartStartDate = liveStart.addingTimeInterval(-chartHistoryOffset)
 +        if chartStartDate < earliestStart {
@@ -618,11 +646,11 @@ index 580d67e..6845968 100644
 -        charts.maxEndDate = chartStartDate.addingTimeInterval(.hours(totalHours))
 +        charts.maxEndDate = chartEndDate
          charts.updateEndDate(charts.maxEndDate)
-+        updateChartHistoryHeader()
++        updateChartHistoryChrome()
      }
  
      override func reloadData(animated: Bool = false) {
-@@ -456,6 +494,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -456,6 +499,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
          var cobValues: [CarbValue]?
          var carbsOnBoard: HKQuantity?
          let startDate = charts.startDate
@@ -632,7 +660,7 @@ index 580d67e..6845968 100644
          let basalDeliveryState = self.basalDeliveryState
          let automaticDosingEnabled = automaticDosingStatus.automaticDosingEnabled
  
-@@ -491,7 +532,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -491,7 +537,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
              if currentContext.contains(.carbs) {
                  reloadGroup.enter()
@@ -641,7 +669,7 @@ index 580d67e..6845968 100644
                      switch result {
                      case .failure(let error):
                          self.log.error("CarbStore failed to get carbs on board values: %{public}@", String(describing: error))
-@@ -511,7 +552,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -511,7 +557,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
          if currentContext.contains(.glucose) {
              reloadGroup.enter()
@@ -650,7 +678,7 @@ index 580d67e..6845968 100644
                  switch result {
                  case .failure(let error):
                      self.log.error("Failure getting glucose samples: %{public}@", String(describing: error))
-@@ -525,7 +566,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -525,7 +571,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
          if currentContext.contains(.insulin) {
              reloadGroup.enter()
@@ -659,7 +687,7 @@ index 580d67e..6845968 100644
                  switch result {
                  case .failure(let error):
                      self.log.error("DoseStore failed to get insulin on board values: %{public}@", String(describing: error))
-@@ -538,7 +579,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -538,7 +584,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
              }
  
              reloadGroup.enter()
@@ -668,7 +696,7 @@ index 580d67e..6845968 100644
                  switch result {
                  case .failure(let error):
                      self.log.error("DoseStore failed to get normalized dose entries: %{public}@", String(describing: error))
-@@ -854,6 +895,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -854,6 +900,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
      }
  
      private func redrawCharts() {
@@ -681,7 +709,7 @@ index 580d67e..6845968 100644
          tableView.beginUpdates()
          charts.prerender()
          for case let cell as ChartTableViewCell in tableView.visibleCells {
-@@ -1214,6 +1261,23 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -1214,6 +1266,44 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
      // MARK: - UITableViewDelegate
  
@@ -702,10 +730,31 @@ index 580d67e..6845968 100644
 +        return header
 +    }
 +
++    override func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
++        guard Section(rawValue: section) == .charts else {
++            return 0
++        }
++        return 88
++    }
++
++    override func tableView(_ tableView: UITableView, viewForFooterInSection section: Int) -> UIView? {
++        guard Section(rawValue: section) == .charts else {
++            return nil
++        }
++        let footer = tableView.dequeueReusableHeaderFooterView(withIdentifier: ChartHistoryScrubberView.reuseIdentifier) as? ChartHistoryScrubberView
++            ?? ChartHistoryScrubberView(reuseIdentifier: ChartHistoryScrubberView.reuseIdentifier)
++        footer.slider.removeTarget(nil, action: nil, for: .allEvents)
++        footer.slider.addTarget(self, action: #selector(chartHistorySliderChanged(_:)), for: .valueChanged)
++        footer.nowButton.removeTarget(nil, action: nil, for: .allEvents)
++        footer.nowButton.addTarget(self, action: #selector(returnChartsToNow), for: .touchUpInside)
++        configureChartHistoryScrubber(footer, moveSlider: !footer.slider.isTracking)
++        return footer
++    }
++
      override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
          switch Section(rawValue: indexPath.section)! {
          case .charts:
-@@ -2038,6 +2102,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -2038,6 +2128,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
      @objc private func stepActiveScenarioBackward() {
          testingScenariosManager.stepActiveScenarioBackward { _ in }
      }
@@ -716,7 +765,7 @@ index 580d67e..6845968 100644
  }
  
  extension UIAlertController {
-@@ -2223,6 +2291,197 @@ extension StatusTableViewController: SettingsViewModelDelegate {
+@@ -2223,6 +2317,235 @@ extension StatusTableViewController: SettingsViewModelDelegate {
              settings.automaticDosingStrategy = strategy
          }
      }
@@ -724,16 +773,10 @@ index 580d67e..6845968 100644
 +    // MARK: - Chart history and status tint
 +
 +    private func setupChartHistoryScrolling() {
-+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleChartHistoryPan(_:)))
-+        pan.maximumNumberOfTouches = 1
-+        pan.cancelsTouchesInView = false
-+        pan.delegate = chartHistoryPanDelegate
-+        chartHistoryPanDelegate.tableView = tableView
-+        tableView.addGestureRecognizer(pan)
-+        // Vertical scrolling waits until this pan decides it is not a sideways chart swipe.
-+        tableView.panGestureRecognizer.require(toFail: pan)
-+
++        // Sideways drags on a chart were opening the detail screen, because that row is a tap target.
++        // History is moved only by the slider under the charts, which is not a chart row.
 +        tableView.register(ChartHistoryHeaderView.self, forHeaderFooterViewReuseIdentifier: ChartHistoryHeaderView.reuseIdentifier)
++        tableView.register(ChartHistoryScrubberView.self, forHeaderFooterViewReuseIdentifier: ChartHistoryScrubberView.reuseIdentifier)
 +
 +        displayStatusTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
 +            self?.sampleDisplayStatus()
@@ -753,27 +796,18 @@ index 580d67e..6845968 100644
 +        sampleDisplayStatus()
 +    }
 +
-+    @objc private func handleChartHistoryPan(_ pan: UIPanGestureRecognizer) {
-+        switch pan.state {
-+        case .changed:
-+            let translation = pan.translation(in: tableView).x
-+            pan.setTranslation(.zero, in: tableView)
-+            guard LoopConstants.minimumChartWidthPerHour > 0 else {
-+                return
-+            }
-+            // Drag toward the right to reveal earlier hours.
-+            let hours = Double(translation / LoopConstants.minimumChartWidthPerHour)
-+            chartHistoryOffset += .hours(hours)
-+            scheduleChartHistoryReload()
-+        case .ended, .cancelled, .failed:
-+            scheduleChartHistoryReload()
-+        default:
-+            break
++    @objc private func chartHistorySliderChanged(_ slider: UISlider) {
++        // The right end is now. Values near that end snap there so it is easy to return.
++        if slider.value > 0.985 {
++            slider.value = 1
 +        }
++        chartHistoryOffset = TimeInterval(1 - slider.value) * maximumChartHistoryOffset
++        updateChartHistoryChrome(moveSlider: false)
++        scheduleChartHistoryReload()
 +    }
 +
 +    private func scheduleChartHistoryReload() {
-+        updateChartHistoryHeader()
++        updateChartHistoryChrome(moveSlider: false)
 +        chartHistoryReloadWork?.cancel()
 +        let work = DispatchWorkItem { [weak self] in
 +            guard let self = self else {
@@ -790,15 +824,35 @@ index 580d67e..6845968 100644
 +        chartHistoryOffset = 0
 +        chartHistoryReloadWork?.cancel()
 +        refreshContext.formUnion(RefreshContext.all)
-+        updateChartHistoryHeader()
++        updateChartHistoryChrome(moveSlider: true)
 +        reloadData(animated: false)
 +    }
 +
-+    private func updateChartHistoryHeader() {
-+        guard let header = tableView.headerView(forSection: Section.charts.rawValue) as? ChartHistoryHeaderView else {
-+            return
++    private func updateChartHistoryChrome(moveSlider: Bool = true) {
++        if let header = tableView.headerView(forSection: Section.charts.rawValue) as? ChartHistoryHeaderView {
++            configureChartHistoryHeader(header)
 +        }
-+        configureChartHistoryHeader(header)
++        if let footer = tableView.footerView(forSection: Section.charts.rawValue) as? ChartHistoryScrubberView {
++            configureChartHistoryScrubber(footer, moveSlider: moveSlider)
++        }
++    }
++
++    private func sliderValueForCurrentOffset() -> Float {
++        guard maximumChartHistoryOffset > 1 else {
++            return 1
++        }
++        let fractionBack = min(1, max(0, chartHistoryOffset / maximumChartHistoryOffset))
++        return Float(1 - fractionBack)
++    }
++
++    private func configureChartHistoryScrubber(_ scrubber: ChartHistoryScrubberView, moveSlider: Bool) {
++        if moveSlider && !scrubber.slider.isTracking {
++            scrubber.slider.value = sliderValueForCurrentOffset()
++        }
++        let formatter = DateIntervalFormatter()
++        formatter.dateStyle = chartHistoryOffset > .hours(20) ? .medium : .none
++        formatter.timeStyle = .short
++        scrubber.rangeLabel.text = formatter.string(from: chartVisibleInterval.start, to: chartVisibleInterval.end)
 +    }
 +
 +    private func configureChartHistoryHeader(_ header: ChartHistoryHeaderView) {
@@ -810,7 +864,7 @@ index 580d67e..6845968 100644
 +            formatter.timeStyle = .short
 +            header.label.text = formatter.string(from: chartVisibleInterval.start, to: chartVisibleInterval.end)
 +        } else {
-+            header.label.text = NSLocalizedString("Swipe charts sideways to look back, up to 7 days", comment: "Hint above the home screen charts when they are showing the live window")
++            header.label.text = NSLocalizedString("Drag the bar under the charts. The right end is now.", comment: "Hint above the home screen charts when they are showing the live window")
 +        }
 +        header.nowButton.removeTarget(nil, action: nil, for: .allEvents)
 +        header.nowButton.addTarget(self, action: #selector(returnChartsToNow), for: .touchUpInside)
@@ -849,32 +903,6 @@ index 580d67e..6845968 100644
 +    }
 +}
 +
-+/// Lets a sideways swipe move the charts without stealing vertical scrolling.
-+private final class ChartHistoryPanDelegate: NSObject, UIGestureRecognizerDelegate {
-+    weak var tableView: UITableView?
-+
-+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let tableView = tableView else {
-+            return false
-+        }
-+        let velocity = pan.velocity(in: tableView)
-+        guard abs(velocity.x) > abs(velocity.y) else {
-+            return false
-+        }
-+        let point = pan.location(in: tableView)
-+        guard let indexPath = tableView.indexPathForRow(at: point),
-+              let cell = tableView.cellForRow(at: indexPath),
-+              cell is ChartTableViewCell else {
-+            return false
-+        }
-+        return true
-+    }
-+
-+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-+        return false
-+    }
-+}
-+
 +private final class ChartHistoryHeaderView: UITableViewHeaderFooterView {
 +    static let reuseIdentifier = "ChartHistoryHeaderView"
 +
@@ -906,6 +934,65 @@ index 580d67e..6845968 100644
 +            nowButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
 +            nowButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
 +        ])
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++}
++
++/// Horizontal history control under the status charts. Not a chart row, so dragging it does not open a chart.
++final class ChartHistoryScrubberView: UITableViewHeaderFooterView {
++    static let reuseIdentifier = "ChartHistoryScrubberView"
++
++    let rangeLabel = UILabel()
++    let slider = UISlider()
++    let nowButton = UIButton(type: .system)
++
++    override init(reuseIdentifier: String?) {
++        super.init(reuseIdentifier: reuseIdentifier)
++
++        contentView.backgroundColor = .secondarySystemBackground
++
++        rangeLabel.font = .preferredFont(forTextStyle: .footnote)
++        rangeLabel.textColor = .label
++        rangeLabel.adjustsFontSizeToFitWidth = true
++        rangeLabel.minimumScaleFactor = 0.7
++        rangeLabel.translatesAutoresizingMaskIntoConstraints = false
++
++        slider.minimumValue = 0
++        slider.maximumValue = 1
++        slider.value = 1
++        slider.isContinuous = true
++        slider.accessibilityIdentifier = "ChartHistorySlider"
++        slider.accessibilityLabel = NSLocalizedString("Chart history", comment: "Accessibility label for the chart history slider")
++        slider.translatesAutoresizingMaskIntoConstraints = false
++
++        nowButton.setTitle(NSLocalizedString("Now", comment: "Button that returns the home screen charts to the current time"), for: .normal)
++        nowButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
++        nowButton.accessibilityIdentifier = "ChartHistoryNow"
++        nowButton.translatesAutoresizingMaskIntoConstraints = false
++
++        contentView.addSubview(rangeLabel)
++        contentView.addSubview(nowButton)
++        contentView.addSubview(slider)
++
++        NSLayoutConstraint.activate([
++            rangeLabel.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
++            rangeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
++            nowButton.leadingAnchor.constraint(greaterThanOrEqualTo: rangeLabel.trailingAnchor, constant: 8),
++            nowButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
++            nowButton.centerYAnchor.constraint(equalTo: rangeLabel.centerYAnchor),
++            slider.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
++            slider.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
++            slider.topAnchor.constraint(equalTo: rangeLabel.bottomAnchor, constant: 4),
++            slider.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
++        ])
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        contentView.frame = bounds
 +    }
 +
 +    required init?(coder: NSCoder) {
