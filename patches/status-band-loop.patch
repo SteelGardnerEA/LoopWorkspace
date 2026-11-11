@@ -332,10 +332,83 @@ index 0000000..c4d6788
 +    }
 +}
 diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
-index 79ec51a..ca78821 100644
+index 79ec51a..1a6c546 100644
 --- a/Loop/Loop/Managers/StatusChartsManager.swift
 +++ b/Loop/Loop/Managers/StatusChartsManager.swift
-@@ -136,3 +136,16 @@ extension StatusChartsManager {
+@@ -15,35 +15,29 @@ import SwiftCharts
+ class StatusChartsManager: ChartsManager {
+     enum ChartIndex: Int, CaseIterable {
+         case glucose
+-        case iob
+-        case dose
++        case insulin
+         case cob
+     }
+ 
+     let glucose: PredictedGlucoseChart
+-    let iob: IOBChart
+-    let dose: DoseChart
++    let insulin: InsulinOverlayChart
+     let cob: COBChart
+ 
+     init(colors: ChartColorPalette, settings: ChartSettings, traitCollection: UITraitCollection) {
+         let glucose = PredictedGlucoseChart(predictedGlucoseBounds: FeatureFlags.predictedGlucoseChartClampEnabled ? .default : nil,
+                                             yAxisStepSizeMGDLOverride: FeatureFlags.predictedGlucoseChartClampEnabled ? 40 : nil)
+-        let iob = IOBChart()
+-        let dose = DoseChart()
++        let insulin = InsulinOverlayChart()
+         let cob = COBChart()
+         self.glucose = glucose
+-        self.iob = iob
+-        self.dose = dose
++        self.insulin = insulin
+         self.cob = cob
+ 
+         super.init(colors: colors, settings: settings, charts: ChartIndex.allCases.map({ (index) -> ChartProviding in
+             switch index {
+             case .glucose:
+                 return glucose
+-            case .iob:
+-                return iob
+-            case .dose:
+-                return dose
++            case .insulin:
++                return insulin
+             case .cob:
+                 return cob
+             }
+@@ -104,24 +98,17 @@ extension StatusChartsManager {
+ 
+ extension StatusChartsManager {
+     func setIOBValues(_ iobValues: [InsulinValue]) {
+-        iob.setIOBValues(iobValues)
+-        invalidateChart(atIndex: ChartIndex.iob.rawValue)
++        insulin.setIOBValues(iobValues)
++        invalidateChart(atIndex: ChartIndex.insulin.rawValue)
+     }
+ 
+-    func iobChart(withFrame frame: CGRect) -> Chart? {
+-        return chart(atIndex: ChartIndex.iob.rawValue, frame: frame)
+-    }
+-}
+-
+-
+-extension StatusChartsManager {
+     func setDoseEntries(_ doseEntries: [DoseEntry]) {
+-        dose.doseEntries = doseEntries
+-        invalidateChart(atIndex: ChartIndex.dose.rawValue)
++        insulin.doseEntries = doseEntries
++        invalidateChart(atIndex: ChartIndex.insulin.rawValue)
+     }
+ 
+-    func doseChart(withFrame frame: CGRect) -> Chart? {
+-        return chart(atIndex: ChartIndex.dose.rawValue, frame: frame)
++    func insulinChart(withFrame frame: CGRect) -> Chart? {
++        return chart(atIndex: ChartIndex.insulin.rawValue, frame: frame)
+     }
+ }
+ 
+@@ -136,3 +123,15 @@ extension StatusChartsManager {
          return chart(atIndex: ChartIndex.cob.rawValue, frame: frame)
      }
  }
@@ -344,8 +417,7 @@ index 79ec51a..ca78821 100644
 +    /// Display-only background tint shared by the four home-screen charts.
 +    func setStatusBands(_ bands: [StatusBandSegment]) {
 +        glucose.statusBands = bands
-+        iob.statusBands = bands
-+        dose.statusBands = bands
++        insulin.statusBands = bands
 +        cob.statusBands = bands
 +        for index in ChartIndex.allCases {
 +            invalidateChart(atIndex: index.rawValue)
@@ -402,10 +474,10 @@ index eea0299..66bec4d 100644
      }
 diff --git a/Loop/Loop/View Controllers/StatusBandPreviewController.swift b/Loop/Loop/View Controllers/StatusBandPreviewController.swift
 new file mode 100644
-index 0000000..c5ae200
+index 0000000..92ede66
 --- /dev/null
 +++ b/Loop/Loop/View Controllers/StatusBandPreviewController.swift	
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,176 @@
 +//
 +//  StatusBandPreviewController.swift
 +//  Loop
@@ -454,7 +526,7 @@ index 0000000..c5ae200
 +        scrubber.slider.accessibilityIdentifier = "ChartHistorySlider"
 +        view.addSubview(scrubber)
 +
-+        for name in ["Glucose", "Active Insulin", "Insulin Delivery", "Active Carbohydrates"] {
++        for name in ["Glucose", "Insulin", "Active Carbohydrates"] {
 +            let host = UIView()
 +            host.backgroundColor = .systemBackground
 +            let label = UILabel()
@@ -535,14 +607,13 @@ index 0000000..c5ae200
 +        chartsManager.setGlucoseValues(glucose)
 +        chartsManager.setIOBValues(insulin)
 +        chartsManager.setCOBValues(carbs)
-+        chartsManager.setDoseEntries([])
++        chartsManager.setDoseEntries(sampleDoses(from: start, until: min(now, end)))
 +        chartsManager.prerender()
 +        NSLog("StatusBandPreview drawing charts")
 +
 +        let frames: [(CGRect) -> UIView?] = [
 +            { self.chartsManager.glucoseChart(withFrame: $0)?.view },
-+            { self.chartsManager.iobChart(withFrame: $0)?.view },
-+            { self.chartsManager.doseChart(withFrame: $0)?.view },
++            { self.chartsManager.insulinChart(withFrame: $0)?.view },
 +            { self.chartsManager.cobChart(withFrame: $0)?.view },
 +        ]
 +        for (index, host) in chartHosts.enumerated() {
@@ -552,6 +623,25 @@ index 0000000..c5ae200
 +                host.addSubview(chartView)
 +            }
 +        }
++    }
++
++    private func sampleDoses(from start: Date, until end: Date) -> [DoseEntry] {
++        let scheduled = HKQuantity(unit: DoseEntry.unitsPerHour, doubleValue: 0)
++        var doses: [DoseEntry] = []
++        var cursor = start
++        var index = 0
++        while cursor < end {
++            let next = min(end, cursor.addingTimeInterval(.minutes(30)))
++            let rate = max(0.2, 1.1 + 0.5 * sin(Double(index) / 3))
++            doses.append(DoseEntry(type: .tempBasal, startDate: cursor, endDate: next, value: rate, unit: .unitsPerHour, scheduledBasalRate: scheduled))
++            cursor = next
++            index += 1
++        }
++        let bolusTime = start.addingTimeInterval(.hours(2))
++        if bolusTime < end {
++            doses.append(DoseEntry(type: .bolus, startDate: bolusTime, value: 2.5, unit: .units))
++        }
++        return doses
 +    }
 +
 +    private static func previewDaysBack() -> Double {
@@ -565,7 +655,7 @@ index 0000000..c5ae200
 +    }
 +}
 diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
-index 580d67e..e535683 100644
+index 580d67e..a6fc250 100644
 --- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
 +++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
 @@ -145,7 +145,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
@@ -696,7 +786,30 @@ index 580d67e..e535683 100644
                  switch result {
                  case .failure(let error):
                      self.log.error("DoseStore failed to get normalized dose entries: %{public}@", String(describing: error))
-@@ -854,6 +900,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -615,10 +661,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+ 
+             // Show the larger of the value either before or after the current date
+-            if let maxValue = charts.iob.iobPoints.allElementsAdjacent(to: Date()).max(by: {
++            if let maxValue = charts.insulin.iobPoints.allElementsAdjacent(to: Date()).max(by: {
+                 return $0.y.scalar < $1.y.scalar
+             }) {
+-                self.currentIOBDescription = String(describing: maxValue.y)
++                self.currentIOBDescription = String(format: "%.2f U", maxValue.y.scalar)
+             } else {
+                 self.currentIOBDescription = nil
+             }
+@@ -698,8 +744,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private enum ChartRow: Int, CaseIterable {
+         case glucose
+-        case iob
+-        case dose
++        case insulin
+         case cob
+     }
+ 
+@@ -854,6 +899,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
      }
  
      private func redrawCharts() {
@@ -709,7 +822,58 @@ index 580d67e..e535683 100644
          tableView.beginUpdates()
          charts.prerender()
          for case let cell as ChartTableViewCell in tableView.visibleCells {
-@@ -1214,6 +1266,44 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -1030,16 +1081,11 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 })
+                 cell.setTitleLabelText(label: NSLocalizedString("Glucose", comment: "The title of the glucose and prediction graph"))
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
+-            case .iob:
++            case .insulin:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+-                    return self?.statusCharts.iobChart(withFrame: frame)?.view
++                    return self?.statusCharts.insulinChart(withFrame: frame)?.view
+                 })
+-                cell.setTitleLabelText(label: NSLocalizedString("Active Insulin", comment: "The title of the Insulin On-Board graph"))
+-            case .dose:
+-                cell.setChartGenerator(generator: { [weak self] (frame) in
+-                    return self?.statusCharts.doseChart(withFrame: frame)?.view
+-                })
+-                cell.setTitleLabelText(label: NSLocalizedString("Insulin Delivery", comment: "The title of the insulin delivery graph"))
++                cell.setTitleLabelText(label: NSLocalizedString("Insulin · blue active, orange delivery", comment: "Title of the combined insulin chart. Blue is active insulin on the left axis. Orange is delivery on the right axis."))
+             case .cob:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.cobChart(withFrame: frame)?.view
+@@ -1184,22 +1230,17 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                     cell.setSubtitleLabel(label: nil)
+                 }
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
+-            case .iob:
+-                if let currentIOB = currentIOBDescription {
+-                    cell.setSubtitleLabel(label: currentIOB)
+-                } else {
+-                    cell.setSubtitleLabel(label: nil)
+-                }
+-            case .dose:
++            case .insulin:
+                 let integerFormatter = NumberFormatter()
+                 integerFormatter.maximumFractionDigits = 0
+-
+-                if  let total = totalDelivery,
+-                    let totalString = integerFormatter.string(from: total) {
+-                    cell.setSubtitleLabel(label: String(format: NSLocalizedString("%@ U Total", comment: "The subtitle format describing total insulin. (1: localized insulin total)"), totalString))
+-                } else {
+-                    cell.setSubtitleLabel(label: nil)
++                var parts: [String] = []
++                if let currentIOB = currentIOBDescription {
++                    parts.append(String(format: NSLocalizedString("%@ active", comment: "Subtitle for active insulin on the combined insulin chart. (1: insulin amount)"), currentIOB))
++                }
++                if let total = totalDelivery, let totalString = integerFormatter.string(from: total) {
++                    parts.append(String(format: NSLocalizedString("%@ U delivered", comment: "Subtitle for insulin delivered today on the combined insulin chart. (1: units)"), totalString))
+                 }
++                cell.setSubtitleLabel(label: parts.isEmpty ? nil : parts.joined(separator: " · "))
+             case .cob:
+                 if let currentCOB = currentCOBDescription {
+                     cell.setSubtitleLabel(label: currentCOB)
+@@ -1214,6 +1255,44 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
      // MARK: - UITableViewDelegate
  
@@ -754,7 +918,31 @@ index 580d67e..e535683 100644
      override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
          switch Section(rawValue: indexPath.section)! {
          case .charts:
-@@ -2038,6 +2128,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -1224,9 +1303,11 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+             switch ChartRow(rawValue: indexPath.row)! {
+             case .glucose:
+-                return max(106, 0.37 * availableSize)
+-            case .iob, .dose, .cob:
+-                return max(106, 0.21 * availableSize)
++                return max(106, 0.40 * availableSize)
++            case .insulin:
++                return max(120, 0.28 * availableSize)
++            case .cob:
++                return max(106, 0.22 * availableSize)
+             }
+         case .hud, .status, .alertWarning:
+             return UITableView.automaticDimension
+@@ -1311,7 +1392,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 if automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled {
+                     performSegue(withIdentifier: PredictionTableViewController.className, sender: indexPath)
+                 }
+-            case .iob, .dose:
++            case .insulin:
+                 performSegue(withIdentifier: InsulinDeliveryTableViewController.className, sender: indexPath)
+             case .cob:
+                 performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
+@@ -2038,6 +2119,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
      @objc private func stepActiveScenarioBackward() {
          testingScenariosManager.stepActiveScenarioBackward { _ in }
      }
@@ -765,7 +953,7 @@ index 580d67e..e535683 100644
  }
  
  extension UIAlertController {
-@@ -2223,6 +2317,235 @@ extension StatusTableViewController: SettingsViewModelDelegate {
+@@ -2223,6 +2308,235 @@ extension StatusTableViewController: SettingsViewModelDelegate {
              settings.automaticDosingStrategy = strategy
          }
      }

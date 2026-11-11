@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - custom-scrollbar
+      - custom-insulin-overlay
 
 concurrency:
   group: custom-simulator-${{ github.ref }}

@@ -1,36 +1,40 @@
 diff --git a/LoopKit/LoopKit.xcodeproj/project.pbxproj b/LoopKit/LoopKit.xcodeproj/project.pbxproj
-index e4423ce..82d7e10 100644
+index e4423ce..1dda0ad 100644
 --- a/LoopKit/LoopKit.xcodeproj/project.pbxproj
 +++ b/LoopKit/LoopKit.xcodeproj/project.pbxproj
-@@ -546,6 +546,7 @@
+@@ -546,6 +546,8 @@
  		A9D3FF0E2A6C198C000C891D /* ChartPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF092A6C198C000C891D /* ChartPoint.swift */; };
  		A9D3FF102A6C19CA000C891D /* ChartAxisValueDoubleLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF0F2A6C19CA000C891D /* ChartAxisValueDoubleLog.swift */; };
  		A9D3FF122A6C19ED000C891D /* ChartPointsContextFillLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF112A6C19ED000C891D /* ChartPointsContextFillLayer.swift */; };
 +		D15B0A71B102B102B102B102 /* StatusBandChartLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */; };
++		D15B0A71B104B104B104B104 /* InsulinOverlayChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B0A71B103B103B103B103 /* InsulinOverlayChart.swift */; };
  		A9D3FF142A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF132A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift */; };
  		A9D3FF162A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF152A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift */; };
  		A9D3FF192A6C2C85000C891D /* PredictedGlucoseChartTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF182A6C2C85000C891D /* PredictedGlucoseChartTests.swift */; };
-@@ -1589,6 +1590,7 @@
+@@ -1589,6 +1591,8 @@
  		A9D3FF092A6C198C000C891D /* ChartPoint.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPoint.swift; sourceTree = "<group>"; };
  		A9D3FF0F2A6C19CA000C891D /* ChartAxisValueDoubleLog.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartAxisValueDoubleLog.swift; sourceTree = "<group>"; };
  		A9D3FF112A6C19ED000C891D /* ChartPointsContextFillLayer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsContextFillLayer.swift; sourceTree = "<group>"; };
 +		D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBandChartLayer.swift; sourceTree = "<group>"; };
++		D15B0A71B103B103B103B103 /* InsulinOverlayChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsulinOverlayChart.swift; sourceTree = "<group>"; };
  		A9D3FF132A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsScatterDownTrianglesLayer.swift; sourceTree = "<group>"; };
  		A9D3FF152A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsTouchHighlightLayerViewCache.swift; sourceTree = "<group>"; };
  		A9D3FF182A6C2C85000C891D /* PredictedGlucoseChartTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PredictedGlucoseChartTests.swift; sourceTree = "<group>"; };
-@@ -3169,6 +3171,7 @@
+@@ -3169,6 +3173,8 @@
  				E93C86A124C8F7550073089B /* InsulinModelChart.swift */,
  				A9D3FEFD2A6C1943000C891D /* IOBChart.swift */,
  				A9D3FEFE2A6C1944000C891D /* PredictedGlucoseChart.swift */,
 +				D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */,
++				D15B0A71B103B103B103B103 /* InsulinOverlayChart.swift */,
  			);
  			path = Charts;
  			sourceTree = "<group>";
-@@ -3915,6 +3918,7 @@
+@@ -3915,6 +3921,8 @@
  				892A5DB42231E191008961AB /* LevelMaskView.swift in Sources */,
  				892A5DA02231E130008961AB /* CompletionNotifying.swift in Sources */,
  				A9D3FF122A6C19ED000C891D /* ChartPointsContextFillLayer.swift in Sources */,
 +				D15B0A71B102B102B102B102 /* StatusBandChartLayer.swift in Sources */,
++				D15B0A71B104B104B104B104 /* InsulinOverlayChart.swift in Sources */,
  				E93C86A424C8F79C0073089B /* ChartLineModel+LoopKitUI.swift in Sources */,
  				B43D69D62A26642300DF0925 /* DemoPlaceHolderView.swift in Sources */,
  				E949E38F24B3711E00024DA0 /* InsulinModelInformationView.swift in Sources */,
@@ -109,6 +113,219 @@ index 54d0921..eb799cb 100644
              gridLayer,
              xAxisLayer,
              yAxisLayer,
+diff --git a/LoopKit/LoopKitUI/Charts/InsulinOverlayChart.swift b/LoopKit/LoopKitUI/Charts/InsulinOverlayChart.swift
+new file mode 100644
+index 0000000..ebacfc7
+--- /dev/null
++++ b/LoopKit/LoopKitUI/Charts/InsulinOverlayChart.swift
+@@ -0,0 +1,207 @@
++//
++//  InsulinOverlayChart.swift
++//  LoopKitUI
++//
++//  Display-only chart. Draws active insulin and insulin delivery on one plot.
++//  It does not calculate doses or insulin on board.
++//
++
++import LoopKit
++import SwiftCharts
++import UIKit
++
++public final class InsulinOverlayChart: ChartProviding {
++
++    public init() {
++    }
++
++    public private(set) var iobPoints: [ChartPoint] = []
++    public var doseEntries: [DoseEntry] = []
++    public var statusBands: [StatusBandSegment] = []
++    public private(set) var endDate: Date?
++
++    private let iobColor = UIColor.systemBlue
++    private let deliveryColor = UIColor.systemOrange
++
++    public func didReceiveMemoryWarning() {
++        iobPoints = []
++        doseEntries = []
++    }
++
++    public func setIOBValues(_ iobValues: [InsulinValue]) {
++        let dateFormatter = DateFormatter(timeStyle: .short)
++        let numberFormatter = NumberFormatter()
++        numberFormatter.maximumFractionDigits = 2
++        iobPoints = iobValues.map { value in
++            ChartPoint(
++                x: ChartAxisValueDate(date: value.startDate, formatter: dateFormatter),
++                y: ChartAxisValueDouble(value.value)
++            )
++        }
++        endDate = iobValues.map(\.startDate).max()
++    }
++
++    public func generate(withFrame frame: CGRect, xAxisModel: ChartAxisModel, xAxisValues: [ChartAxisValue], axisLabelSettings: ChartLabelSettings, guideLinesLayerSettings: ChartGuideLinesLayerSettings, colors: ChartColorPalette, chartSettings: ChartSettings, labelsWidthY: CGFloat, gestureRecognizer: UIGestureRecognizer?, traitCollection: UITraitCollection) -> Chart {
++        let iobLabelSettings = ChartLabelSettings(font: .systemFont(ofSize: 11), fontColor: iobColor)
++        let deliveryLabelSettings = ChartLabelSettings(font: .systemFont(ofSize: 11), fontColor: deliveryColor)
++        let numberFormatter = NumberFormatter()
++        numberFormatter.maximumFractionDigits = 1
++        numberFormatter.minimumFractionDigits = 0
++
++        let iobMaximum = max(1, iobPoints.map { $0.y.scalar }.max() ?? 1)
++        let windowStart = xAxisValues.first.map { ChartAxisValueDate.dateFromScalar($0.scalar) } ?? Date()
++        let delivery = deliverySeries(windowStart: windowStart)
++        let deliveryMaximum = max(1, delivery.maximum)
++
++        let iobAxisValues = axisValues(maximum: iobMaximum, suffix: " U", formatter: numberFormatter, labelSettings: iobLabelSettings)
++        let deliveryAxisValues = axisValues(maximum: deliveryMaximum, suffix: " U/hr", formatter: numberFormatter, labelSettings: deliveryLabelSettings)
++
++        let axisWidth = max(labelsWidthY, 46)
++        let iobAxisModel = ChartAxisModel(axisValues: iobAxisValues, lineColor: iobColor, labelSpaceReservationMode: .fixed(axisWidth))
++        let deliveryAxisModel = ChartAxisModel(axisValues: deliveryAxisValues, lineColor: deliveryColor, labelSpaceReservationMode: .fixed(axisWidth))
++
++        let coords = ChartCoordsSpace(
++            chartSettings: chartSettings,
++            chartSize: frame.size,
++            yLowModels: [iobAxisModel],
++            yHighModels: [deliveryAxisModel],
++            xLowModels: [xAxisModel]
++        )
++        let xAxisLayer = coords.xLowAxesLayers[0]
++        let iobAxisLayer = coords.yLowAxesLayers[0]
++        let deliveryAxisLayer = coords.yHighAxesLayers[0]
++        let innerFrame = coords.chartInnerFrame
++
++        let statusBandLayer = StatusBandChartLayer(xAxis: xAxisLayer.axis, yAxis: iobAxisLayer.axis, segments: statusBands)
++
++        let gridLayer = ChartGuideLinesForValuesLayer(
++            xAxis: xAxisLayer.axis,
++            yAxis: iobAxisLayer.axis,
++            settings: guideLinesLayerSettings,
++            axisValuesX: Array(xAxisValues.dropFirst().dropLast()),
++            axisValuesY: iobAxisValues
++        )
++
++        let iobLine: ChartPointsLineLayer<ChartPoint>?
++        if iobPoints.count > 1 {
++            iobLine = ChartPointsLineLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: iobAxisLayer.axis,
++                lineModels: [ChartLineModel(chartPoints: iobPoints, lineColor: iobColor, lineWidth: 2, animDuration: 0, animDelay: 0)]
++            )
++        } else {
++            iobLine = nil
++        }
++
++        let deliveryFill = ChartPointsFillsLayer(
++            xAxis: xAxisLayer.axis,
++            yAxis: deliveryAxisLayer.axis,
++            fills: [ChartPointsFill(chartPoints: delivery.fill, fillColor: deliveryColor.withAlphaComponent(0.28))]
++        )
++        let deliveryLine: ChartPointsLineLayer<ChartPoint>?
++        if delivery.line.count > 1 {
++            deliveryLine = ChartPointsLineLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: deliveryAxisLayer.axis,
++                lineModels: [ChartLineModel(chartPoints: delivery.line, lineColor: deliveryColor, lineWidth: 2, animDuration: 0, animDelay: 0)]
++            )
++        } else {
++            deliveryLine = nil
++        }
++        let bolusLayer: ChartPointsScatterDownTrianglesLayer<ChartPoint>?
++        if delivery.bolus.isEmpty {
++            bolusLayer = nil
++        } else {
++            bolusLayer = ChartPointsScatterDownTrianglesLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: deliveryAxisLayer.axis,
++                chartPoints: delivery.bolus,
++                displayDelay: 0,
++                itemSize: CGSize(width: 12, height: 12),
++                itemFillColor: deliveryColor
++            )
++        }
++
++        let layers: [ChartLayer?] = [
++            statusBandLayer,
++            gridLayer,
++            xAxisLayer,
++            iobAxisLayer,
++            deliveryAxisLayer,
++            deliveryFill,
++            deliveryLine,
++            iobLine,
++            bolusLayer
++        ]
++        return Chart(frame: frame, innerFrame: innerFrame, settings: chartSettings, layers: layers.compactMap { $0 })
++    }
++
++    private func axisValues(maximum: Double, suffix: String, formatter: NumberFormatter, labelSettings: ChartLabelSettings) -> [ChartAxisValue] {
++        [0, maximum / 2, maximum].map { value in
++            LabeledChartValue(value, suffix: suffix, formatter: formatter, labelSettings: labelSettings)
++        }
++    }
++
++    private struct DeliverySeries {
++        var line: [ChartPoint]
++        var fill: [ChartPoint]
++        var bolus: [ChartPoint]
++        var maximum: Double
++    }
++
++    /// Screen positions only. Uses the dose records already loaded for the chart.
++    private func deliverySeries(windowStart: Date) -> DeliverySeries {
++        let dateFormatter = DateFormatter(timeStyle: .short)
++        var line: [ChartPoint] = []
++        var fill: [ChartPoint] = []
++        var bolus: [ChartPoint] = []
++        var maximum = 1.0
++
++        for entry in doseEntries {
++            if entry.type == .bolus && entry.netBasalUnits > 0 {
++                let units = entry.unitsInDeliverableIncrements
++                maximum = max(maximum, units)
++                bolus.append(ChartPoint(
++                    x: ChartAxisValueDate(date: entry.startDate, formatter: dateFormatter),
++                    y: ChartAxisValueDouble(units)
++                ))
++                continue
++            }
++            guard entry.endDate.timeIntervalSince(entry.startDate) > 0 else {
++                continue
++            }
++            let startDate = max(windowStart, entry.startDate)
++            let startX = ChartAxisValueDate(date: startDate, formatter: dateFormatter)
++            let endX = ChartAxisValueDate(date: entry.endDate, formatter: dateFormatter)
++            let rate = entry.netBasalUnitsPerHour
++            maximum = max(maximum, rate)
++            let zero = ChartAxisValueDouble(0)
++            let value = ChartAxisValueDouble(rate)
++            fill.append(ChartPoint(x: startX, y: zero))
++            line.append(ChartPoint(x: startX, y: zero))
++            if abs(rate) > .ulpOfOne {
++                fill.append(ChartPoint(x: startX, y: value))
++                fill.append(ChartPoint(x: endX, y: value))
++                line.append(ChartPoint(x: startX, y: value))
++                line.append(ChartPoint(x: endX, y: value))
++            }
++            fill.append(ChartPoint(x: endX, y: zero))
++            line.append(ChartPoint(x: endX, y: zero))
++        }
++        return DeliverySeries(line: line, fill: fill, bolus: bolus, maximum: maximum)
++    }
++}
++
++private final class LabeledChartValue: ChartAxisValueDouble {
++    private let suffix: String
++
++    init(_ value: Double, suffix: String, formatter: NumberFormatter, labelSettings: ChartLabelSettings) {
++        self.suffix = suffix
++        super.init(value, formatter: formatter, labelSettings: labelSettings)
++    }
++
++    override var description: String {
++        let number = formatter.string(from: NSNumber(value: scalar)) ?? String(scalar)
++        return number + suffix
++    }
++}
 diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
 index bd786fe..59e9d66 100644
 --- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
