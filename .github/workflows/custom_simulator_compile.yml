@@ -76,21 +76,28 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p build
-          xcodebuild \
-            -workspace LoopWorkspace.xcworkspace \
-            -scheme LoopWorkspace \
-            -destination 'generic/platform=iOS Simulator' \
-            -configuration Debug \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=- \
-            DEVELOPMENT_TEAM= \
-            ONLY_ACTIVE_ARCH=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            build \
-            | tee build/xcodebuild.log
+          build_once() {
+            xcodebuild \
+              -workspace LoopWorkspace.xcworkspace \
+              -scheme LoopWorkspace \
+              -destination 'generic/platform=iOS Simulator' \
+              -configuration Debug \
+              -derivedDataPath build/DerivedData \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=- \
+              DEVELOPMENT_TEAM= \
+              ONLY_ACTIVE_ARCH=YES \
+              COMPILER_INDEX_STORE_ENABLE=NO \
+              build
+          }
+          build_once | tee build/xcodebuild.log
           status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ] && grep -q "did not contain an Info.plist" build/xcodebuild.log; then
+            echo "Retrying after a plugin copy failure"
+            build_once | tee -a build/xcodebuild.log
+            status=${PIPESTATUS[0]}
+          fi
           echo "xcodebuild exit ${status}" | tee build/build-summary.txt
           xcodebuild -version >> build/build-summary.txt
           if [ "$status" -ne 0 ]; then
