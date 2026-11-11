@@ -133,119 +133,66 @@ index 995ec7c..5460f8d 100644
              case .cob:
                  performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
 diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
-index ff5238a..2bad9a0 100644
+index ff5238a..6bfb117 100644
 --- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
 +++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
 @@ -51,6 +51,10 @@ public class DoseChart: ChartProviding {
      /// Display only: when Loop was running, not running, or had automatic dosing off. Empty draws no background.
      public var loopStatusPeriods: [LoopStatusPeriod] = []
  
-+    /// Display only: active insulin drawn behind the delivery bars on its own scale,
-+    /// labeled on the right edge. Empty draws the plain delivery chart.
++    /// Display only: active insulin drawn behind the delivery bars on the same scale
++    /// (units on one shared axis). Empty draws the plain delivery chart.
 +    public var activeInsulinPoints: [ChartPoint] = []
 +
      private var doseChartCache: ChartPointsTouchHighlightLayerViewCache?
  }
  
-@@ -106,6 +110,46 @@ public extension DoseChart {
+@@ -68,8 +72,15 @@ public extension DoseChart {
+         
+         let points = generateDosePoints(startDate: startDate)
+ 
++        // Active insulin on the delivery chart's own scale, so 2 U of active insulin sits at
++        // the same height as a 2 U bolus or a 2 U/hour rate.
++        let doseFormatter = NumberFormatter.dose
++        let activeInsulinScaledPoints: [ChartPoint] = activeInsulinPoints.map {
++            ChartPoint(x: $0.x, y: ChartAxisValueDoubleLog(actualDouble: $0.y.scalar, unitString: "U", formatter: doseFormatter))
++        }
++
+         let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
+-            chartPoints: points.basal + points.bolus + doseDisplayRangePoints,
++            chartPoints: points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints,
+             minSegmentCount: 2,
+             maxSegmentCount: 3,
+             multiple: log(2) / 2,
+@@ -106,6 +117,22 @@ public extension DoseChart {
              bolusLayer = nil
          }
  
-+        // Active insulin overlay, on a second scale that shares this chart's frame and time axis
++        // Active insulin overlay, drawn behind the delivery bars on the shared axis
 +        var activeInsulinArea: ChartLayer?
 +        var activeInsulinLine: ChartLayer?
-+        var activeInsulinLabels: ChartLayer?
-+        if !activeInsulinPoints.isEmpty {
-+            let activeInsulinRangePoints: [ChartPoint] = [0, 1].map {
-+                ChartPoint(x: ChartAxisValue(scalar: 0), y: ChartAxisValueInt($0))
-+            }
-+            let activeInsulinYValues = ChartAxisValuesStaticGenerator.generateYAxisValuesWithChartPoints(
-+                activeInsulinPoints + activeInsulinRangePoints,
-+                minSegmentCount: 2,
-+                maxSegmentCount: 3,
-+                multiple: 0.5,
-+                axisValueGenerator: { ChartAxisValueDouble($0, labelSettings: axisLabelSettings) },
-+                addPaddingSegmentIfEdge: false
-+            )
-+            let activeInsulinYModel = ChartAxisModel(axisValues: activeInsulinYValues, lineColor: .clear, labelSpaceReservationMode: .fixed(labelsWidthY))
-+            // Same frame, time axis, and label width, so the inner area matches the delivery chart exactly.
-+            let activeInsulinCoords = ChartCoordsSpaceLeftBottomSingleAxis(chartSettings: chartSettings, chartFrame: frame, xModel: xAxisModel, yModel: activeInsulinYModel)
-+            let activeInsulinYAxis = activeInsulinCoords.yAxisLayer.axis
-+
++        if !activeInsulinScaledPoints.isEmpty {
 +            activeInsulinArea = ChartPointsFillsLayer(
 +                xAxis: xAxisLayer.axis,
-+                yAxis: activeInsulinYAxis,
-+                fills: [ChartPointsFill(chartPoints: activeInsulinPoints, fillColor: colors.insulinTint.withAlphaComponent(0.18))]
++                yAxis: yAxisLayer.axis,
++                fills: [ChartPointsFill(chartPoints: activeInsulinScaledPoints, fillColor: colors.insulinTint.withAlphaComponent(0.18))]
 +            )
 +            activeInsulinLine = ChartPointsLineLayer(
 +                xAxis: xAxisLayer.axis,
-+                yAxis: activeInsulinYAxis,
-+                lineModels: [ChartLineModel(chartPoints: activeInsulinPoints, lineColor: colors.insulinTint.withAlphaComponent(0.6), lineWidth: 1.5, animDuration: 0, animDelay: 0)]
-+            )
-+            activeInsulinLabels = ActiveInsulinScaleLabelsLayer(
-+                xAxis: xAxisLayer.axis,
-+                yAxis: activeInsulinYAxis,
-+                values: activeInsulinYValues.map { $0.scalar }.filter { $0 > 0 },
-+                font: axisLabelSettings.font,
-+                color: colors.insulinTint
++                yAxis: yAxisLayer.axis,
++                lineModels: [ChartLineModel(chartPoints: activeInsulinScaledPoints, lineColor: colors.insulinTint.withAlphaComponent(0.6), lineWidth: 1.5, animDuration: 0, animDelay: 0)]
 +            )
 +        }
 +
          // Grid lines
          let gridLayer = ChartGuideLinesForValuesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, settings: guideLinesLayerSettings, axisValuesX: Array(xAxisValues.dropFirst().dropLast()), axisValuesY: yAxisValues)
  
-@@ -138,6 +182,9 @@ public extension DoseChart {
+@@ -138,6 +165,8 @@ public extension DoseChart {
              yAxisLayer,
              zeroGuidelineLayer,
              doseChartCache?.highlightLayer,
 +            activeInsulinArea,
 +            activeInsulinLine,
-+            activeInsulinLabels,
              doseArea,
              doseLine,
              bolusLayer
-@@ -212,3 +259,44 @@ public extension DoseChart {
-         return pointsCache
-     }
- }
-+
-+
-+/// Small labels on the right edge showing the active insulin scale (for example "2 U").
-+final class ActiveInsulinScaleLabelsLayer: ChartCoordsSpaceLayer {
-+    private let values: [Double]
-+    private let font: UIFont
-+    private let color: UIColor
-+
-+    init?(xAxis: ChartAxis, yAxis: ChartAxis, values: [Double], font: UIFont, color: UIColor) {
-+        guard !values.isEmpty else {
-+            return nil
-+        }
-+        self.values = values
-+        self.font = font.withSize(max(9, font.pointSize - 3))
-+        self.color = color
-+        super.init(xAxis: xAxis, yAxis: yAxis)
-+    }
-+
-+    override func chartInitialized(chart: Chart) {
-+        super.chartInitialized(chart: chart)
-+
-+        let formatter = NumberFormatter()
-+        formatter.minimumFractionDigits = 0
-+        formatter.maximumFractionDigits = 1
-+        let container = chart.containerView
-+        for value in values {
-+            let label = UILabel()
-+            label.font = font
-+            label.textColor = color
-+            label.text = (formatter.string(from: NSNumber(value: value)) ?? String(value)) + " U"
-+            label.sizeToFit()
-+            let y = modelLocToContainerScreenLoc(y: value)
-+            label.frame.origin = CGPoint(
-+                x: container.bounds.maxX - label.frame.width - 2,
-+                y: min(max(0, y - label.frame.height / 2), container.bounds.maxY - label.frame.height)
-+            )
-+            label.isUserInteractionEnabled = false
-+            container.addSubview(label)
-+        }
-+    }
-+}
