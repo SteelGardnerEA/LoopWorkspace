@@ -1,0 +1,249 @@
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 7f804f6..bf6ba92 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -106,6 +106,10 @@ extension StatusChartsManager {
+     func setIOBValues(_ iobValues: [InsulinValue]) {
+         iob.setIOBValues(iobValues)
+         invalidateChart(atIndex: ChartIndex.iob.rawValue)
++
++        // The main screen shows active insulin inside the insulin delivery chart.
++        dose.activeInsulinPoints = iob.iobPoints
++        invalidateChart(atIndex: ChartIndex.dose.rawValue)
+     }
+ 
+     func iobChart(withFrame frame: CGRect) -> Chart? {
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index eacf154..6d00858 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -157,23 +157,28 @@ final class ChartPreviewViewController: UIViewController {
+         placedViews.append(legend)
+         y += 40
+ 
+-        let rows: [(String, CGFloat)] = [("Glucose", 190), ("Active Insulin", 90), ("Insulin Delivery", 90), ("Active Carbohydrates", 90)]
++        let rows: [(String, StatusChartsManager.ChartIndex, CGFloat)] = [
++            ("Glucose", .glucose, 190),
++            ("Insulin (delivery bars, active insulin shaded, right-edge scale)", .dose, 120),
++            ("Active Carbohydrates", .cob, 90)
++        ]
+         charts.prerender()
+-        for (index, row) in rows.enumerated() {
++        for row in rows {
+             let title = UILabel(frame: CGRect(x: area.minX, y: y, width: area.width, height: 20))
+             title.font = .preferredFont(forTextStyle: .subheadline)
++            title.adjustsFontSizeToFitWidth = true
+             title.text = row.0
+             view.addSubview(title)
+             placedViews.append(title)
+             y += 20
+ 
+-            let size = CGSize(width: area.width, height: row.1)
+-            if let chart = charts.chart(atIndex: index, frame: CGRect(origin: .zero, size: size)) {
++            let size = CGSize(width: area.width, height: row.2)
++            if let chart = charts.chart(atIndex: row.1.rawValue, frame: CGRect(origin: .zero, size: size)) {
+                 chart.view.frame = CGRect(origin: CGPoint(x: area.minX, y: y), size: size)
+                 view.addSubview(chart.view)
+                 placedViews.append(chart.view)
+             }
+-            y += row.1 + 10
++            y += row.2 + 10
+         }
+     }
+ 
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 995ec7c..5460f8d 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -711,7 +711,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private enum ChartRow: Int, CaseIterable {
+         case glucose
+-        case iob
++        // Active insulin is drawn inside the dose chart, so there is no separate row for it.
+         case dose
+         case cob
+     }
+@@ -1043,16 +1043,11 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 })
+                 cell.setTitleLabelText(label: NSLocalizedString("Glucose", comment: "The title of the glucose and prediction graph"))
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
+-            case .iob:
+-                cell.setChartGenerator(generator: { [weak self] (frame) in
+-                    return self?.statusCharts.iobChart(withFrame: frame)?.view
+-                })
+-                cell.setTitleLabelText(label: NSLocalizedString("Active Insulin", comment: "The title of the Insulin On-Board graph"))
+             case .dose:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.doseChart(withFrame: frame)?.view
+                 })
+-                cell.setTitleLabelText(label: NSLocalizedString("Insulin Delivery", comment: "The title of the insulin delivery graph"))
++                cell.setTitleLabelText(label: NSLocalizedString("Insulin", comment: "The title of the combined insulin delivery and active insulin graph"))
+             case .cob:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.cobChart(withFrame: frame)?.view
+@@ -1197,22 +1192,19 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                     cell.setSubtitleLabel(label: nil)
+                 }
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
+-            case .iob:
+-                if let currentIOB = currentIOBDescription {
+-                    cell.setSubtitleLabel(label: currentIOB)
+-                } else {
+-                    cell.setSubtitleLabel(label: nil)
+-                }
+             case .dose:
+                 let integerFormatter = NumberFormatter()
+                 integerFormatter.maximumFractionDigits = 0
+ 
++                var parts: [String] = []
++                if let currentIOB = currentIOBDescription {
++                    parts.append(String(format: NSLocalizedString("%@ active", comment: "The subtitle part describing active insulin. (1: localized insulin amount)"), currentIOB))
++                }
+                 if  let total = totalDelivery,
+                     let totalString = integerFormatter.string(from: total) {
+-                    cell.setSubtitleLabel(label: String(format: NSLocalizedString("%@ U Total", comment: "The subtitle format describing total insulin. (1: localized insulin total)"), totalString))
+-                } else {
+-                    cell.setSubtitleLabel(label: nil)
++                    parts.append(String(format: NSLocalizedString("%@ U Total", comment: "The subtitle format describing total insulin. (1: localized insulin total)"), totalString))
+                 }
++                cell.setSubtitleLabel(label: parts.isEmpty ? nil : parts.joined(separator: " · "))
+             case .cob:
+                 if let currentCOB = currentCOBDescription {
+                     cell.setSubtitleLabel(label: currentCOB)
+@@ -1238,7 +1230,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             switch ChartRow(rawValue: indexPath.row)! {
+             case .glucose:
+                 return max(106, 0.37 * availableSize)
+-            case .iob, .dose, .cob:
++            case .dose:
++                // Taller than before, since it now holds both insulin charts.
++                return max(120, 0.27 * availableSize)
++            case .cob:
+                 return max(106, 0.21 * availableSize)
+             }
+         case .hud, .status, .alertWarning:
+@@ -1324,7 +1319,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 if automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled {
+                     performSegue(withIdentifier: PredictionTableViewController.className, sender: indexPath)
+                 }
+-            case .iob, .dose:
++            case .dose:
+                 performSegue(withIdentifier: InsulinDeliveryTableViewController.className, sender: indexPath)
+             case .cob:
+                 performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index ff5238a..6c5bf80 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -51,6 +51,10 @@ public class DoseChart: ChartProviding {
+     /// Display only: when Loop was running, not running, or had automatic dosing off. Empty draws no background.
+     public var loopStatusPeriods: [LoopStatusPeriod] = []
+ 
++    /// Display only: active insulin drawn behind the delivery bars on its own scale,
++    /// labeled on the right edge. Empty draws the plain delivery chart.
++    public var activeInsulinPoints: [ChartPoint] = []
++
+     private var doseChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -106,6 +110,46 @@ public extension DoseChart {
+             bolusLayer = nil
+         }
+ 
++        // Active insulin overlay, on a second scale that shares this chart's frame and time axis
++        var activeInsulinArea: ChartLayer?
++        var activeInsulinLine: ChartLayer?
++        var activeInsulinLabels: ChartLayer?
++        if !activeInsulinPoints.isEmpty {
++            let activeInsulinRangePoints: [ChartPoint] = [0, 1].map {
++                ChartPoint(x: ChartAxisValue(scalar: 0), y: ChartAxisValueInt($0))
++            }
++            let activeInsulinYValues = ChartAxisValuesStaticGenerator.generateYAxisValuesWithChartPoints(
++                activeInsulinPoints + activeInsulinRangePoints,
++                minSegmentCount: 2,
++                maxSegmentCount: 3,
++                multiple: 0.5,
++                axisValueGenerator: { ChartAxisValueDouble($0, labelSettings: axisLabelSettings) },
++                addPaddingSegmentIfEdge: false
++            )
++            let activeInsulinYModel = ChartAxisModel(axisValues: activeInsulinYValues, lineColor: .clear, labelSpaceReservationMode: .fixed(labelsWidthY))
++            // Same frame, time axis, and label width, so the inner area matches the delivery chart exactly.
++            let activeInsulinCoords = ChartCoordsSpaceLeftBottomSingleAxis(chartSettings: chartSettings, chartFrame: frame, xModel: xAxisModel, yModel: activeInsulinYModel)
++            let activeInsulinYAxis = activeInsulinCoords.yAxisLayer.axis
++
++            activeInsulinArea = ChartPointsFillsLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: activeInsulinYAxis,
++                fills: [ChartPointsFill(chartPoints: activeInsulinPoints, fillColor: colors.insulinTint.withAlphaComponent(0.18))]
++            )
++            activeInsulinLine = ChartPointsLineLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: activeInsulinYAxis,
++                lineModels: [ChartLineModel(chartPoints: activeInsulinPoints, lineColor: colors.insulinTint.withAlphaComponent(0.6), lineWidth: 1.5, animDuration: 0, animDelay: 0)]
++            )
++            activeInsulinLabels = ActiveInsulinScaleLabelsLayer(
++                xAxis: xAxisLayer.axis,
++                yAxis: activeInsulinYAxis,
++                values: activeInsulinYValues.map { $0.scalar }.filter { $0 > 0 },
++                font: axisLabelSettings.font,
++                color: colors.insulinTint
++            )
++        }
++
+         // Grid lines
+         let gridLayer = ChartGuideLinesForValuesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, settings: guideLinesLayerSettings, axisValuesX: Array(xAxisValues.dropFirst().dropLast()), axisValuesY: yAxisValues)
+ 
+@@ -138,6 +182,9 @@ public extension DoseChart {
+             yAxisLayer,
+             zeroGuidelineLayer,
+             doseChartCache?.highlightLayer,
++            activeInsulinArea,
++            activeInsulinLine,
++            activeInsulinLabels,
+             doseArea,
+             doseLine,
+             bolusLayer
+@@ -212,3 +259,42 @@ public extension DoseChart {
+         return pointsCache
+     }
+ }
++
++
++/// Small labels on the right edge showing the active insulin scale (for example "2 U").
++final class ActiveInsulinScaleLabelsLayer: ChartCoordsSpaceLayer {
++    private let values: [Double]
++    private let font: UIFont
++    private let color: UIColor
++
++    init?(xAxis: ChartAxis, yAxis: ChartAxis, values: [Double], font: UIFont, color: UIColor) {
++        guard !values.isEmpty else {
++            return nil
++        }
++        self.values = values
++        self.font = font.withSize(max(9, font.pointSize - 3))
++        self.color = color
++        super.init(xAxis: xAxis, yAxis: yAxis)
++    }
++
++    override func chartInitialized(chart: Chart) {
++        super.chartInitialized(chart: chart)
++
++        let formatter = NumberFormatter.dose
++        let container = chart.containerView
++        for value in values {
++            let label = UILabel()
++            label.font = font
++            label.textColor = color
++            label.text = (formatter.string(from: NSNumber(value: value)) ?? String(value)) + " U"
++            label.sizeToFit()
++            let y = modelLocToContainerScreenLoc(y: value)
++            label.frame.origin = CGPoint(
++                x: container.bounds.maxX - label.frame.width - 2,
++                y: min(max(0, y - label.frame.height / 2), container.bounds.maxY - label.frame.height)
++            )
++            label.isUserInteractionEnabled = false
++            container.addSubview(label)
++        }
++    }
++}
