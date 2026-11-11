@@ -1,0 +1,170 @@
+# Unsigned compile of the custom branch. No secrets, no signing, no Apple upload.
+
+name: Custom Loop simulator compile
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - custom-insulin-overlay
+
+concurrency:
+  group: custom-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-simulator:
+    name: Compile for iOS Simulator
+    # Standard Intel runner (free on public repos). Not a larger paid runner.
+    runs-on: macos-26-intel
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select newest Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Installed Xcode apps:"
+          ls -d /Applications/Xcode*.app || true
+          selected=""
+          best_major=-1
+          for app in /Applications/Xcode.app /Applications/Xcode_*.app; do
+            if [ ! -d "${app}" ]; then
+              continue
+            fi
+            ver=$(defaults read "${app}/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo 0)
+            major=${ver%%.*}
+            case "${major}" in
+              ''|*[!0-9]*) major=0 ;;
+            esac
+            if [ "${major}" -gt "${best_major}" ]; then
+              best_major=${major}
+              selected=${app}
+            fi
+          done
+          if [ -z "${selected}" ] || [ ! -d "${selected}" ]; then
+            echo "No Xcode app found"
+            exit 1
+          fi
+          echo "Using ${selected}"
+          sudo xcode-select -s "${selected}/Contents/Developer"
+          xcodebuild -version
+
+      - name: Apply patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          patches=(patches/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "No patch files in patches/"
+            exit 1
+          fi
+          for patch in "${patches[@]}"; do
+            echo "Applying ${patch}"
+            git apply "${patch}" --verbose --whitespace=fix
+          done
+          grep -n 'inherited).LoopCustom' Loop/Loop.xcodeproj/project.pbxproj
+
+      - name: Compile Loop (iOS Simulator, no signing)
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build
+          build_once() {
+            xcodebuild \
+              -workspace LoopWorkspace.xcworkspace \
+              -scheme LoopWorkspace \
+              -destination 'generic/platform=iOS Simulator' \
+              -configuration Debug \
+              -derivedDataPath build/DerivedData \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=- \
+              DEVELOPMENT_TEAM= \
+              ONLY_ACTIVE_ARCH=YES \
+              COMPILER_INDEX_STORE_ENABLE=NO \
+              build
+          }
+          set +e
+          build_once | tee build/xcodebuild.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ] && grep -q "did not contain an Info.plist" build/xcodebuild.log; then
+            echo "Retrying after a plugin copy failure"
+            build_once | tee -a build/xcodebuild.log
+            status=${PIPESTATUS[0]}
+          fi
+          set -e
+          echo "xcodebuild exit ${status}" | tee build/build-summary.txt
+          xcodebuild -version >> build/build-summary.txt
+          if [ "$status" -ne 0 ]; then
+            { grep -E 'error:|fatal error:|BUILD FAILED' build/xcodebuild.log || true; } | tail -n 80 > build/build-errors.txt
+            exit "$status"
+          fi
+          echo "BUILD SUCCEEDED" >> build/build-summary.txt
+          APP=$(find build/DerivedData -type d -path '*Debug-iphonesimulator*' -name 'Loop.app' | head -n 1)
+          echo "App: ${APP}" | tee -a build/build-summary.txt
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist" | tee -a build/build-summary.txt
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP}/Info.plist" | tee -a build/build-summary.txt
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "${APP}/Info.plist" | tee -a build/build-summary.txt
+          id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist")
+          name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP}/Info.plist")
+          case "${id}" in
+            *LoopCustom*) ;;
+            *) echo "Bundle id does not contain LoopCustom: ${id}"; exit 1 ;;
+          esac
+          if [ "${name}" != "Loop Custom" ]; then
+            echo "Display name is '${name}', expected Loop Custom"
+            exit 1
+          fi
+
+      - name: Screenshot chart slider
+        if: success()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          mkdir -p build/screenshots
+          APP=$(find build/DerivedData -type d -path '*Debug-iphonesimulator*' -name 'Loop.app' | head -n 1 || true)
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist" | tr -d '[:space:]')
+          DEVICE_TYPE=$(xcrun simctl list devicetypes | sed -n 's/.*(\(com.apple.CoreSimulator.SimDeviceType.iPhone-1[67][^)]*\)).*/\1/p' | head -n 1 | tr -d '[:space:]')
+          RUNTIME=$(xcrun simctl list runtimes available | sed -n 's/.*(\(com.apple.CoreSimulator.SimRuntime.iOS-[^)]*\)).*/\1/p' | tail -n 1 | tr -d '[:space:]')
+          UDID=""
+          if [ -n "${DEVICE_TYPE}" ] && [ -n "${RUNTIME}" ]; then
+            UDID=$(xcrun simctl create "ChartSlider" "${DEVICE_TYPE}" "${RUNTIME}" | tr -d '[:space:]' || true)
+          fi
+          if [ -z "${UDID}" ]; then
+            UDID=$(xcrun simctl list devices available | sed -n 's/.*iPhone.*(\([0-9A-Fa-f-]\{36\}\)).*/\1/p' | head -n 1 | tr -d '[:space:]')
+          fi
+          echo "Simulator ${UDID}" | tee build/screenshots/README.txt
+          xcrun simctl boot "${UDID}" || true
+          xcrun simctl bootstatus "${UDID}" -b || true
+          xcrun simctl install "${UDID}" "${APP}"
+          capture() {
+            local name="$1"
+            shift
+            xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" >/dev/null 2>&1 || true
+            xcrun simctl launch "${UDID}" "${BUNDLE_ID}" -LoopStatusBandPreview "$@" || true
+            sleep 8
+            xcrun simctl io "${UDID}" screenshot "build/screenshots/${name}.png" || true
+          }
+          capture now
+          capture scrolled-2-5-days -LoopStatusBandPreviewDays 2.5
+          echo "now.png is the slider at the right (now). scrolled-2-5-days.png is about two and a half days back." | tee -a build/screenshots/README.txt
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-simulator-compile
+          if-no-files-found: warn
+          path: |
+            build/xcodebuild.log
+            build/build-summary.txt
+            build/build-errors.txt
+            build/screenshots/

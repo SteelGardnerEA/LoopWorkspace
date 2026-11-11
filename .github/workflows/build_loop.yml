@@ -6,7 +6,8 @@ on:
 env:
   GH_PAT: ${{ secrets.GH_PAT }}
   UPSTREAM_REPO: LoopKit/LoopWorkspace
-  UPSTREAM_BRANCH: ${{ github.ref_name }} # branch on upstream repository to sync from (replace with specific branch name if needed)
+  # The custom branch does not exist upstream. If this file is ever used from main, keep tracking the branch name.
+  UPSTREAM_BRANCH: ${{ github.ref_name == 'custom' && 'main' || github.ref_name }}
   TARGET_BRANCH: ${{ github.ref_name }} # target branch on fork to be kept in sync
 
 jobs:
@@ -92,9 +93,10 @@ jobs:
 
       # This syncs any target branch to upstream branch of the same name
       - name: Sync upstream changes
-        if: | # do not run the upstream sync action on the upstream repository
+        if: | # custom is a local fork branch; do not sync a missing upstream branch into it
           steps.workflow-permission.outputs.has_permission == 'true' &&
-          vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'LoopKit'
+          vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'LoopKit' &&
+          github.ref_name != 'custom'
         id: sync
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.2
         with:

@@ -1,5 +1,7 @@
 # Using GitHub Actions + FastLane to deploy to TestFlight
 
+On the `custom` branch, use [CUSTOM_BUILD.md](../CUSTOM_BUILD.md). That branch is a separate app named Loop Custom. The steps below are for the standard Loop app on `main`.
+
 These instructions allow you to build your app without having access to a Mac.
 
 * You can install your app on phones using TestFlight that are not connected to your computer
