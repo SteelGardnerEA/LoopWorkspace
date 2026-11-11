@@ -133,7 +133,7 @@ index 995ec7c..5460f8d 100644
              case .cob:
                  performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
 diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
-index ff5238a..6c5bf80 100644
+index ff5238a..2bad9a0 100644
 --- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
 +++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
 @@ -51,6 +51,10 @@ public class DoseChart: ChartProviding {
@@ -204,7 +204,7 @@ index ff5238a..6c5bf80 100644
              doseArea,
              doseLine,
              bolusLayer
-@@ -212,3 +259,42 @@ public extension DoseChart {
+@@ -212,3 +259,44 @@ public extension DoseChart {
          return pointsCache
      }
  }
@@ -229,7 +229,9 @@ index ff5238a..6c5bf80 100644
 +    override func chartInitialized(chart: Chart) {
 +        super.chartInitialized(chart: chart)
 +
-+        let formatter = NumberFormatter.dose
++        let formatter = NumberFormatter()
++        formatter.minimumFractionDigits = 0
++        formatter.maximumFractionDigits = 1
 +        let container = chart.containerView
 +        for value in values {
 +            let label = UILabel()
