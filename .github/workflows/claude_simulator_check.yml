@@ -128,6 +128,21 @@ jobs:
           xcrun simctl ui "${UDID}" appearance dark || true
           shot charts-dark
 
+      - name: Print screenshots into the log
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Small JPEG copies, text-encoded between markers, so they can be read from the log.
+          shopt -s nullglob
+          for png in build/screenshots/*.png; do
+            name=$(basename "${png}" .png)
+            sips -Z 1100 -s format jpeg -s formatOptions 60 "${png}" --out "build/${name}.jpg" >/dev/null
+            echo "CLAUDE-SHOT-BEGIN ${name}"
+            base64 -b 100 -i "build/${name}.jpg"
+            echo "CLAUDE-SHOT-END ${name}"
+          done
+
       - name: Upload logs and screenshots
         if: always()
         uses: actions/upload-artifact@v4
