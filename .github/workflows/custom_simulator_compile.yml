@@ -91,6 +91,7 @@ jobs:
               COMPILER_INDEX_STORE_ENABLE=NO \
               build
           }
+          set +e
           build_once | tee build/xcodebuild.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ] && grep -q "did not contain an Info.plist" build/xcodebuild.log; then
@@ -98,6 +99,7 @@ jobs:
             build_once | tee -a build/xcodebuild.log
             status=${PIPESTATUS[0]}
           fi
+          set -e
           echo "xcodebuild exit ${status}" | tee build/build-summary.txt
           xcodebuild -version >> build/build-summary.txt
           if [ "$status" -ne 0 ]; then
