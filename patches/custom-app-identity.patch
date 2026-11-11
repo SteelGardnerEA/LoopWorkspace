@@ -1,0 +1,22 @@
+diff --git a/Loop/Loop.xcodeproj/project.pbxproj b/Loop/Loop.xcodeproj/project.pbxproj
+index f9e6271..5ed0cec 100644
+--- a/Loop/Loop.xcodeproj/project.pbxproj
++++ b/Loop/Loop.xcodeproj/project.pbxproj
+@@ -4285,7 +4285,7 @@
+ 					CFLocalizedString,
+ 					LocalizedString,
+ 				);
+-				MAIN_APP_BUNDLE_IDENTIFIER = "$(inherited).Loop";
++				MAIN_APP_BUNDLE_IDENTIFIER = "$(inherited).LoopCustom";
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+ 				ONLY_ACTIVE_ARCH = YES;
+@@ -4396,7 +4396,7 @@
+ 					CFLocalizedString,
+ 					LocalizedString,
+ 				);
+-				MAIN_APP_BUNDLE_IDENTIFIER = "$(inherited).Loop";
++				MAIN_APP_BUNDLE_IDENTIFIER = "$(inherited).LoopCustom";
+ 				MTL_ENABLE_DEBUG_INFO = NO;
+ 				MTL_FAST_MATH = YES;
+ 				PROVISIONING_PROFILE = "";
