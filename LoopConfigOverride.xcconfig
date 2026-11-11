@@ -3,11 +3,11 @@
 // Override this if you don't want the default com.${DEVELOPMENT_TEAM}.loopkit that loop uses
 // MAIN_APP_BUNDLE_IDENTIFIER = com.myname.loop
 
-// Customize this to change the app name displayed
-//MAIN_APP_DISPLAY_NAME = Loop
+// One-line name shown on the phone. Change only this line to rename the app.
+MAIN_APP_DISPLAY_NAME = Loop Custom
 
-// Customize this to change the URL to open Loop to something other than the display name
-//URL_SCHEME_NAME = $(MAIN_APP_DISPLAY_NAME)
+// Link scheme without a space, so it does not collide with standard Loop.
+URL_SCHEME_NAME = LoopCustom
 
 // Features
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) EXPERIMENTAL_FEATURES_ENABLED SIMULATORS_ENABLED ALLOW_ALGORITHM_EXPERIMENTS DEBUG_FEATURES_ENABLED

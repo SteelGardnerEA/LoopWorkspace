@@ -1,0 +1,269 @@
+diff --git a/LoopKit/LoopKit.xcodeproj/project.pbxproj b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+index e4423ce..82d7e10 100644
+--- a/LoopKit/LoopKit.xcodeproj/project.pbxproj
++++ b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+@@ -546,6 +546,7 @@
+ 		A9D3FF0E2A6C198C000C891D /* ChartPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF092A6C198C000C891D /* ChartPoint.swift */; };
+ 		A9D3FF102A6C19CA000C891D /* ChartAxisValueDoubleLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF0F2A6C19CA000C891D /* ChartAxisValueDoubleLog.swift */; };
+ 		A9D3FF122A6C19ED000C891D /* ChartPointsContextFillLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF112A6C19ED000C891D /* ChartPointsContextFillLayer.swift */; };
++		D15B0A71B102B102B102B102 /* StatusBandChartLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */; };
+ 		A9D3FF142A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF132A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift */; };
+ 		A9D3FF162A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF152A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift */; };
+ 		A9D3FF192A6C2C85000C891D /* PredictedGlucoseChartTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FF182A6C2C85000C891D /* PredictedGlucoseChartTests.swift */; };
+@@ -1589,6 +1590,7 @@
+ 		A9D3FF092A6C198C000C891D /* ChartPoint.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPoint.swift; sourceTree = "<group>"; };
+ 		A9D3FF0F2A6C19CA000C891D /* ChartAxisValueDoubleLog.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartAxisValueDoubleLog.swift; sourceTree = "<group>"; };
+ 		A9D3FF112A6C19ED000C891D /* ChartPointsContextFillLayer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsContextFillLayer.swift; sourceTree = "<group>"; };
++		D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBandChartLayer.swift; sourceTree = "<group>"; };
+ 		A9D3FF132A6C1A01000C891D /* ChartPointsScatterDownTrianglesLayer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsScatterDownTrianglesLayer.swift; sourceTree = "<group>"; };
+ 		A9D3FF152A6C1A16000C891D /* ChartPointsTouchHighlightLayerViewCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartPointsTouchHighlightLayerViewCache.swift; sourceTree = "<group>"; };
+ 		A9D3FF182A6C2C85000C891D /* PredictedGlucoseChartTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PredictedGlucoseChartTests.swift; sourceTree = "<group>"; };
+@@ -3169,6 +3171,7 @@
+ 				E93C86A124C8F7550073089B /* InsulinModelChart.swift */,
+ 				A9D3FEFD2A6C1943000C891D /* IOBChart.swift */,
+ 				A9D3FEFE2A6C1944000C891D /* PredictedGlucoseChart.swift */,
++				D15B0A71B101B101B101B101 /* StatusBandChartLayer.swift */,
+ 			);
+ 			path = Charts;
+ 			sourceTree = "<group>";
+@@ -3915,6 +3918,7 @@
+ 				892A5DB42231E191008961AB /* LevelMaskView.swift in Sources */,
+ 				892A5DA02231E130008961AB /* CompletionNotifying.swift in Sources */,
+ 				A9D3FF122A6C19ED000C891D /* ChartPointsContextFillLayer.swift in Sources */,
++				D15B0A71B102B102B102B102 /* StatusBandChartLayer.swift in Sources */,
+ 				E93C86A424C8F79C0073089B /* ChartLineModel+LoopKitUI.swift in Sources */,
+ 				B43D69D62A26642300DF0925 /* DemoPlaceHolderView.swift in Sources */,
+ 				E949E38F24B3711E00024DA0 /* InsulinModelInformationView.swift in Sources */,
+diff --git a/LoopKit/LoopKitUI/Charts/COBChart.swift b/LoopKit/LoopKitUI/Charts/COBChart.swift
+index 2bbae1e..fb1be51 100644
+--- a/LoopKit/LoopKitUI/Charts/COBChart.swift
++++ b/LoopKit/LoopKitUI/Charts/COBChart.swift
+@@ -35,6 +35,9 @@ public class COBChart: ChartProviding {
+ 
+     public private(set) var endDate: Date?
+ 
++    /// Display-only home-screen status tint. Empty unless the home screen sets it.
++    public var statusBands: [StatusBandSegment] = []
++
+     private var cobChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -74,7 +77,10 @@ public extension COBChart {
+             )
+         }
+ 
++        let statusBandLayer = StatusBandChartLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, segments: statusBands)
++
+         let layers: [ChartLayer?] = [
++            statusBandLayer,
+             gridLayer,
+             xAxisLayer,
+             yAxisLayer,
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index ad30019..4d0aef5 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -48,6 +48,9 @@ public class DoseChart: ChartProviding {
+ 
+     public private(set) var endDate: Date?
+ 
++    /// Display-only home-screen status tint. Empty unless the home screen sets it.
++    public var statusBands: [StatusBandSegment] = []
++
+     private var doseChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -128,7 +131,10 @@ public extension DoseChart {
+             )
+         }
+ 
++        let statusBandLayer = StatusBandChartLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, segments: statusBands)
++
+         let layers: [ChartLayer?] = [
++            statusBandLayer,
+             gridLayer,
+             xAxisLayer,
+             yAxisLayer,
+diff --git a/LoopKit/LoopKitUI/Charts/IOBChart.swift b/LoopKit/LoopKitUI/Charts/IOBChart.swift
+index 54d0921..eb799cb 100644
+--- a/LoopKit/LoopKitUI/Charts/IOBChart.swift
++++ b/LoopKit/LoopKitUI/Charts/IOBChart.swift
+@@ -38,6 +38,9 @@ public class IOBChart: ChartProviding {
+ 
+     public private(set) var endDate: Date?
+ 
++    /// Display-only home-screen status tint. Empty unless the home screen sets it.
++    public var statusBands: [StatusBandSegment] = []
++
+     private var iobChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -88,7 +91,10 @@ public extension IOBChart {
+             )
+         }
+ 
++        let statusBandLayer = StatusBandChartLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, segments: statusBands)
++
+         let layers: [ChartLayer?] = [
++            statusBandLayer,
+             gridLayer,
+             xAxisLayer,
+             yAxisLayer,
+diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+index bd786fe..59e9d66 100644
+--- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+@@ -61,6 +61,9 @@ public class PredictedGlucoseChart: GlucoseChart, ChartProviding {
+ 
+     public private(set) var endDate: Date?
+ 
++    /// Display-only home-screen status tint. Other screens leave this empty.
++    public var statusBands: [StatusBandSegment] = []
++
+     private var predictedGlucoseSoftBounds: PredictedGlucoseBounds?
+     
+     private let yAxisStepSizeMGDLOverride: Double?
+@@ -206,7 +209,10 @@ extension PredictedGlucoseChart {
+             )
+         }
+ 
++        let statusBandLayer = StatusBandChartLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, segments: statusBands)
++
+         let layers: [ChartLayer?] = [
++            statusBandLayer,
+             gridLayer,
+             targetsLayer,
+             xAxisLayer,
+diff --git a/LoopKit/LoopKitUI/Charts/StatusBandChartLayer.swift b/LoopKit/LoopKitUI/Charts/StatusBandChartLayer.swift
+new file mode 100644
+index 0000000..8644f29
+--- /dev/null
++++ b/LoopKit/LoopKitUI/Charts/StatusBandChartLayer.swift
+@@ -0,0 +1,127 @@
++//
++//  StatusBandChartLayer.swift
++//  LoopKitUI
++//
++//  Display-only background tint for the home-screen charts.
++//  Nothing in this file is read by dosing.
++//
++
++import UIKit
++import SwiftCharts
++
++/// Which pale tint to paint behind a chart for a stretch of time.
++public enum StatusBandKind: Equatable {
++    /// Closed loop is on and Loop is still completing.
++    case closedLoop
++    /// Closed loop is off (open loop) and Loop is still completing.
++    case openLoop
++    /// Loop is not completing, a pump or CGM is disconnected, or there is no status log.
++    case notCompleting
++}
++
++/// One tinted stretch on the chart's time axis.
++public struct StatusBandSegment: Equatable {
++    public var start: Date
++    public var end: Date
++    public var kind: StatusBandKind
++
++    public init(start: Date, end: Date, kind: StatusBandKind) {
++        self.start = start
++        self.end = end
++        self.kind = kind
++    }
++}
++
++/// Paints status tints across the whole plot, behind glucose dots and the target band.
++public final class StatusBandChartLayer: ChartCoordsSpaceLayer {
++
++    private let segments: [StatusBandSegment]
++
++    public init?(xAxis: ChartAxis, yAxis: ChartAxis, segments: [StatusBandSegment]) {
++        let usable = segments.filter { $0.end > $0.start }
++        guard !usable.isEmpty else {
++            return nil
++        }
++        self.segments = usable
++        super.init(xAxis: xAxis, yAxis: yAxis)
++    }
++
++    public override func chartInitialized(chart: Chart) {
++        super.chartInitialized(chart: chart)
++
++        let view = StatusBandView(frame: chart.containerView.bounds)
++        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        view.isUserInteractionEnabled = false
++        view.isAccessibilityElement = false
++        view.backgroundColor = .clear
++        view.isOpaque = false
++        view.segments = segments.map { segment in
++            let startX = modelLocToScreenLoc(x: segment.start.timeIntervalSince1970)
++            let endX = modelLocToScreenLoc(x: segment.end.timeIntervalSince1970)
++            return StatusBandView.Segment(minX: min(startX, endX), maxX: max(startX, endX), kind: segment.kind)
++        }
++        // Chart init already placed the plot views. Insert behind them so dots stay crisp.
++        chart.containerView.insertSubview(view, at: 0)
++    }
++}
++
++private final class StatusBandView: UIView {
++
++    struct Segment {
++        var minX: CGFloat
++        var maxX: CGFloat
++        var kind: StatusBandKind
++    }
++
++    var segments: [Segment] = []
++
++    override func draw(_ rect: CGRect) {
++        guard let context = UIGraphicsGetCurrentContext() else {
++            return
++        }
++
++        for segment in segments {
++            let band = CGRect(x: segment.minX, y: bounds.minY, width: segment.maxX - segment.minX, height: bounds.height)
++            guard band.width > 0, band.intersects(rect) else {
++                continue
++            }
++
++            fillColor(for: segment.kind).setFill()
++            UIBezierPath(rect: band).fill()
++
++            // Open loop uses indigo stripes so it is not mistaken for the solid light-blue target band.
++            if segment.kind == .openLoop {
++                context.saveGState()
++                context.addRect(band)
++                context.clip()
++                stripeColor.setStroke()
++                let path = UIBezierPath()
++                path.lineWidth = 1
++                let spacing: CGFloat = 9
++                var x = band.minX - band.height
++                while x < band.maxX {
++                    path.move(to: CGPoint(x: x, y: band.maxY))
++                    path.addLine(to: CGPoint(x: x + band.height, y: band.minY))
++                    x += spacing
++                }
++                path.stroke()
++                context.restoreGState()
++            }
++        }
++    }
++
++    private func fillColor(for kind: StatusBandKind) -> UIColor {
++        switch kind {
++        case .closedLoop:
++            return UIColor.systemGreen.withAlphaComponent(0.16)
++        case .openLoop:
++            return UIColor.systemIndigo.withAlphaComponent(0.10)
++        case .notCompleting:
++            return UIColor.systemRed.withAlphaComponent(0.14)
++        }
++    }
++
++    private var stripeColor: UIColor {
++        UIColor.systemIndigo.withAlphaComponent(0.28)
++    }
++}
