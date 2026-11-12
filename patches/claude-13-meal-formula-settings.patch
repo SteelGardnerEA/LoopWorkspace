@@ -1,0 +1,308 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 206e168..a320a55 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+     static var isChartPreview: Bool {
+         #if DEBUG
+         let arguments = ProcessInfo.processInfo.arguments
+-        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview")
++        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview")
+         #else
+         return false
+         #endif
+@@ -53,6 +53,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         #if DEBUG
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeMealSettingsPreview") {
++            // Settings → Meal Breakdown.
++            let settings = UIHostingController(rootView: NavigationStack { MealBreakdownSettingsView() })
++            window?.rootViewController = settings
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreview") {
+             // The carb entry screen's Meal Breakdown tab, filled in with an example meal.
+             window?.rootViewController = MealBreakdownPreview.makeViewController()
+@@ -397,6 +405,11 @@ enum MealBreakdownPreview {
+         viewModel.mealFiber = 6
+         viewModel.mealProtein = 44
+         viewModel.mealFat = 36
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewOneOff") {
++            // A one-meal change: 50% of starches medium, 6 min per gram of fat.
++            viewModel.mealFormula.mediumStarchPercent = 50
++            viewModel.mealFormula.fatMinutesPerGram = 6
++        }
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewConfirm") {
+             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                 viewModel.continueToBolus()
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index 288fded..ad4dbb0 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -190,6 +190,8 @@ final class CarbEntryViewModel: ObservableObject {
+     @Published var mealFiber: Double? = nil
+     @Published var mealProtein: Double? = nil
+     @Published var mealFat: Double? = nil
++    /// This meal's formula: starts from the saved default; changes here are for this meal only.
++    @Published var mealFormula: MealBreakdownFormula = .saved
+ 
+     var mealBreakdown: MealBreakdown {
+         return MealBreakdown(
+@@ -197,7 +199,8 @@ final class CarbEntryViewModel: ObservableObject {
+             sugars: mealSugars ?? 0,
+             fiber: mealFiber ?? 0,
+             protein: mealProtein ?? 0,
+-            fat: mealFat ?? 0
++            fat: mealFat ?? 0,
++            formula: mealFormula
+         )
+     }
+ 
+@@ -457,12 +460,60 @@ final class CarbEntryViewModel: ObservableObject {
+ /// - Delayed 🍕: 40% of starches + 50% of protein, absorbed from 3 hours after the meal
+ ///   until the delay, where delay = (protein × 4 min + fat × 8 min).
+ ///   If the delay is 3 hours or less there is no later window, so this part joins 🌮.
++/// The adjustable numbers in Steel's meal formula. The saved copy (Settings → Meal Breakdown) is
++/// the default for each meal; the Meal Breakdown tab can change them for one meal.
++struct MealBreakdownFormula: Codable, Equatable {
++    /// Percent of starches in the 🌮 medium entry; the 🍕 delayed entry gets the rest.
++    var mediumStarchPercent: Double = 60
++    /// Percent of protein grams added to the 🍕 delayed entry.
++    var proteinPercent: Double = 50
++    /// Minutes of delay per gram of protein.
++    var proteinMinutesPerGram: Double = 4
++    /// Minutes of delay per gram of fat.
++    var fatMinutesPerGram: Double = 8
++
++    static let standard = MealBreakdownFormula()
++
++    var delayedStarchPercent: Double {
++        return 100 - mediumStarchPercent
++    }
++
++    private static let defaultsKey = "com.loopkit.Loop.MealBreakdownFormula"
++
++    /// The saved default, or the standard formula if none was saved.
++    static var saved: MealBreakdownFormula {
++        get {
++            guard let data = UserDefaults.standard.data(forKey: defaultsKey),
++                  let formula = try? JSONDecoder().decode(MealBreakdownFormula.self, from: data) else {
++                return .standard
++            }
++            return formula.clamped
++        }
++        set {
++            if let data = try? JSONEncoder().encode(newValue.clamped) {
++                UserDefaults.standard.set(data, forKey: defaultsKey)
++            }
++        }
++    }
++
++    /// Keeps every value in a sensible range.
++    var clamped: MealBreakdownFormula {
++        var formula = self
++        formula.mediumStarchPercent = min(max(mediumStarchPercent, 0), 100)
++        formula.proteinPercent = min(max(proteinPercent, 0), 100)
++        formula.proteinMinutesPerGram = min(max(proteinMinutesPerGram, 0), 30)
++        formula.fatMinutesPerGram = min(max(fatMinutesPerGram, 0), 30)
++        return formula
++    }
++}
++
+ struct MealBreakdown: Equatable {
+     var carbs: Double
+     var sugars: Double
+     var fiber: Double
+     var protein: Double
+     var fat: Double
++    var formula: MealBreakdownFormula = .standard
+ 
+     static let delayedStart: TimeInterval = .hours(3)
+ 
+@@ -475,15 +526,15 @@ struct MealBreakdown: Equatable {
+     }
+ 
+     var mediumGrams: Double {
+-        return 0.6 * starches
++        return formula.mediumStarchPercent / 100 * starches
+     }
+ 
+     var delayedGrams: Double {
+-        return 0.4 * starches + 0.5 * max(0, protein)
++        return formula.delayedStarchPercent / 100 * starches + formula.proteinPercent / 100 * max(0, protein)
+     }
+ 
+     var delay: TimeInterval {
+-        return .minutes(max(0, protein) * 4 + max(0, fat) * 8)
++        return .minutes(max(0, protein) * formula.proteinMinutesPerGram + max(0, fat) * formula.fatMinutesPerGram)
+     }
+ 
+     var hasDelayedPart: Bool {
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index 3fc200b..a580944 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -75,6 +75,8 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+                 if viewModel.entryMode == .mealBreakdown {
+                     mealInputCard
+                         .padding(.top, 8)
++                    mealFormulaCard
++                        .padding(.top, 8)
+                     mealResultCard
+                         .padding(.top, 8)
+                 } else {
+@@ -279,6 +281,32 @@ extension CarbEntryView {
+         }
+     }
+ 
++    private var mealFormulaCard: some View {
++        VStack(alignment: .leading, spacing: 10) {
++            HStack {
++                Text("FORMULA FOR THIS MEAL", comment: "Meal breakdown: title of the one-meal formula card")
++                    .font(.footnote)
++                    .foregroundColor(.secondary)
++                Spacer()
++                if viewModel.mealFormula != .saved {
++                    Button(NSLocalizedString("Use Default", comment: "Meal breakdown: button to go back to the saved formula")) {
++                        viewModel.mealFormula = .saved
++                    }
++                    .font(.footnote)
++                }
++            }
++            MealBreakdownFormulaRows(formula: $viewModel.mealFormula)
++            Text("Changes here are for this meal only. Set the default in Settings → Meal Breakdown.", comment: "Meal breakdown: note under the one-meal formula card")
++                .font(.caption)
++                .foregroundColor(.secondary)
++                .fixedSize(horizontal: false, vertical: true)
++        }
++        .padding(.vertical, 12)
++        .padding(.horizontal)
++        .background(CardBackground())
++        .padding(.horizontal)
++    }
++
+     private var mealResultCard: some View {
+         let breakdown = viewModel.mealBreakdown
+         let now = Date()
+@@ -487,3 +515,99 @@ extension CarbEntryView {
+         case amountConsumed, time, foodType, absorptionTime, favoriteFoodSelection
+     }
+ }
++
++
++// MARK: - Meal Breakdown formula (shared by the carb screen and Settings)
++
++/// Steppers for the four adjustable numbers in the meal formula.
++struct MealBreakdownFormulaRows: View {
++    @Binding var formula: MealBreakdownFormula
++
++    var body: some View {
++        VStack(spacing: 10) {
++            Stepper(value: $formula.mediumStarchPercent, in: 0...100, step: 5) {
++                row(
++                    title: NSLocalizedString("🌮 Starches in medium", comment: "Meal formula: percent of starches in the medium entry"),
++                    detail: String(format: NSLocalizedString("🍕 delayed gets %@", comment: "Meal formula: the rest of the starches go to the delayed entry (1: percent)"), percent(formula.delayedStarchPercent)),
++                    value: percent(formula.mediumStarchPercent)
++                )
++            }
++            CardSectionDivider()
++            Stepper(value: $formula.proteinPercent, in: 0...100, step: 5) {
++                row(
++                    title: NSLocalizedString("🍕 Protein added", comment: "Meal formula: percent of protein grams added to the delayed entry"),
++                    detail: NSLocalizedString("Of protein grams, as carbs", comment: "Meal formula: protein percent explanation"),
++                    value: percent(formula.proteinPercent)
++                )
++            }
++            CardSectionDivider()
++            Stepper(value: $formula.proteinMinutesPerGram, in: 0...30, step: 0.5) {
++                row(
++                    title: NSLocalizedString("Protein delay", comment: "Meal formula: minutes of delay per gram of protein"),
++                    detail: NSLocalizedString("Minutes per gram", comment: "Meal formula: delay unit explanation"),
++                    value: minutes(formula.proteinMinutesPerGram)
++                )
++            }
++            CardSectionDivider()
++            Stepper(value: $formula.fatMinutesPerGram, in: 0...30, step: 0.5) {
++                row(
++                    title: NSLocalizedString("Fat delay", comment: "Meal formula: minutes of delay per gram of fat"),
++                    detail: NSLocalizedString("Minutes per gram", comment: "Meal formula: delay unit explanation"),
++                    value: minutes(formula.fatMinutesPerGram)
++                )
++            }
++        }
++    }
++
++    private func row(title: String, detail: String, value: String) -> some View {
++        HStack {
++            VStack(alignment: .leading, spacing: 2) {
++                Text(title)
++                Text(detail)
++                    .font(.caption)
++                    .foregroundColor(.secondary)
++            }
++            Spacer()
++            Text(value)
++                .bold()
++                .monospacedDigit()
++        }
++    }
++
++    private func percent(_ value: Double) -> String {
++        return NumberFormatter.localizedString(from: NSNumber(value: value.rounded()), number: .none) + "%"
++    }
++
++    private func minutes(_ value: Double) -> String {
++        let formatter = NumberFormatter()
++        formatter.minimumFractionDigits = 0
++        formatter.maximumFractionDigits = 1
++        let number = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
++        return String(format: NSLocalizedString("%@ min", comment: "Meal formula: minutes value (1: number)"), number)
++    }
++}
++
++/// Settings → Meal Breakdown: the default formula used for each new meal.
++struct MealBreakdownSettingsView: View {
++    @State private var formula: MealBreakdownFormula = .saved
++
++    var body: some View {
++        List {
++            Section(footer: Text("Each Meal Breakdown starts from these numbers. You can change them for a single meal on the carb entry screen.\n\nStarches = carbs − sugars − fiber. 🍭 sugars now; 🌮 the medium share of starches now, over 3 h; 🍕 the rest of the starches plus the protein share, starting 3 h after the meal and running until the protein and fat delay ends. These are ordinary carb entries; Loop's dosing math is unchanged.", comment: "Meal Breakdown settings footer")) {
++                MealBreakdownFormulaRows(formula: $formula)
++                    .padding(.vertical, 4)
++            }
++            Section {
++                Button(NSLocalizedString("Reset to Defaults (60%, 50%, 4 min, 8 min)", comment: "Meal Breakdown settings: reset button")) {
++                    formula = .standard
++                }
++                .disabled(formula == .standard)
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(NSLocalizedString("Meal Breakdown", comment: "Meal Breakdown settings title"))
++        .onChange(of: formula) { _, newValue in
++            MealBreakdownFormula.saved = newValue
++        }
++    }
++}
+diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
+index 9f9e3aa..9d33daf 100644
+--- a/Loop/Loop/Views/SettingsView.swift
++++ b/Loop/Loop/Views/SettingsView.swift
+@@ -279,6 +279,14 @@ extension SettingsView {
+                             descriptiveText: NSLocalizedString("Diabetes Treatment", comment: "Descriptive text for Therapy Settings"))
+             }
+ 
++            NavigationLink(destination: MealBreakdownSettingsView()) {
++                LargeButton(action: { },
++                            includeArrow: false,
++                            imageView: Image(systemName: "fork.knife.circle").resizable().aspectRatio(contentMode: .fit).foregroundColor(carbTintColor).frame(width: 30),
++                            label: NSLocalizedString("Meal Breakdown", comment: "Title text for button to Meal Breakdown settings"),
++                            descriptiveText: NSLocalizedString("Default Meal Formula", comment: "Descriptive text for Meal Breakdown settings"))
++            }
++
+             ForEach(pluginMenuItems.filter {$0.section == .configuration}) { item in
+                 item.view
+             }
