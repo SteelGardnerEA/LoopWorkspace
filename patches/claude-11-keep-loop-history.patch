@@ -1,0 +1,221 @@
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 7373e02..2a4e2d6 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -239,3 +239,170 @@ extension StatusChartsManager {
+         return HKQuantity(unit: .milligramsPerDeciliter, doubleValue: bottom)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: max(top, defaultUpper))
+     }
+ }
++
++
++/// Display only. A small copy of each successful Loop cycle's time and prediction, kept in the
++/// app's own folder for 7 days, so the chart background and past predictions survive the app
++/// being closed. Nothing here is used for dosing. One file per day; old days are deleted.
++final class LoopChartHistoryCache {
++    static let shared = LoopChartHistoryCache()
++
++    struct CachedLoop {
++        let date: Date
++        let prediction: [GlucoseValue]
++    }
++
++    private struct Entry: Codable {
++        let date: Date
++        /// Pairs of (seconds after `date`, mg/dL), as 32-bit floats.
++        let points: Data
++    }
++
++    private let queue = DispatchQueue(label: "com.loopkit.Loop.LoopChartHistoryCache", qos: .utility)
++    private var entriesByDay: [String: [Date: Entry]] = [:]
++    private var loaded = false
++    private let keepDuration: TimeInterval = .days(7)
++    private var observer: NSObjectProtocol?
++
++    private lazy var directory: URL? = {
++        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
++            return nil
++        }
++        let url = base.appendingPathComponent("LoopChartHistory", isDirectory: true)
++        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
++        return url
++    }()
++
++    private static let dayFormatter: DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.locale = Locale(identifier: "en_US_POSIX")
++        formatter.timeZone = TimeZone(identifier: "UTC")
++        formatter.dateFormat = "yyyy-MM-dd"
++        return formatter
++    }()
++
++    /// After each successful cycle, copies the newest records, even while the app is in the background.
++    func startRecording(loopManager: AnyObject, dosingDecisionStore: DosingDecisionStore) {
++        guard observer == nil else {
++            return
++        }
++        observer = NotificationCenter.default.addObserver(forName: .LoopCompleted, object: loopManager, queue: nil) { [weak self, weak dosingDecisionStore] _ in
++            guard let self = self, let store = dosingDecisionStore else {
++                return
++            }
++            Task {
++                let recent = (try? await store.getDosingDecisions(start: Date(timeIntervalSinceNow: .hours(-1)))) ?? []
++                self.record(recent)
++            }
++        }
++    }
++
++    /// Copies successful loop cycles (with their predictions) into the cache.
++    func record(_ decisions: [StoredDosingDecision]) {
++        let loops = decisions.filter { $0.reason == "loop" && $0.errors.isEmpty }
++        guard !loops.isEmpty else {
++            return
++        }
++        queue.async {
++            self.loadIfNeeded()
++            var changedDays = Set<String>()
++            for decision in loops {
++                let day = Self.dayFormatter.string(from: decision.date)
++                if self.entriesByDay[day]?[decision.date] != nil {
++                    continue
++                }
++                var floats: [Float32] = []
++                for value in decision.predictedGlucose ?? [] {
++                    floats.append(Float32(value.startDate.timeIntervalSince(decision.date)))
++                    floats.append(Float32(value.quantity.doubleValue(for: .milligramsPerDeciliter)))
++                }
++                let data = floats.withUnsafeBufferPointer { Data(buffer: $0) }
++                self.entriesByDay[day, default: [:]][decision.date] = Entry(date: decision.date, points: data)
++                changedDays.insert(day)
++            }
++            changedDays.forEach { self.save(day: $0) }
++        }
++    }
++
++    /// Cycles from the cache between these dates.
++    func loops(start: Date, end: Date?) async -> [CachedLoop] {
++        return await withCheckedContinuation { continuation in
++            queue.async {
++                self.loadIfNeeded()
++                let end = end ?? .distantFuture
++                var result: [CachedLoop] = []
++                for entries in self.entriesByDay.values {
++                    for entry in entries.values where entry.date >= start && entry.date <= end {
++                        result.append(CachedLoop(date: entry.date, prediction: Self.prediction(from: entry)))
++                    }
++                }
++                continuation.resume(returning: result.sorted { $0.date < $1.date })
++            }
++        }
++    }
++
++    private static func prediction(from entry: Entry) -> [GlucoseValue] {
++        var floats = [Float32](repeating: 0, count: entry.points.count / MemoryLayout<Float32>.size)
++        _ = floats.withUnsafeMutableBytes { entry.points.copyBytes(to: $0) }
++        var values: [GlucoseValue] = []
++        var index = 0
++        while index + 1 < floats.count {
++            values.append(SimpleGlucoseValue(
++                startDate: entry.date.addingTimeInterval(TimeInterval(floats[index])),
++                quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: Double(floats[index + 1]))
++            ))
++            index += 2
++        }
++        return values
++    }
++
++    private func fileURL(day: String) -> URL? {
++        return directory?.appendingPathComponent("loops-\(day).plist")
++    }
++
++    private func loadIfNeeded() {
++        dispatchPrecondition(condition: .onQueue(queue))
++        guard !loaded else {
++            return
++        }
++        loaded = true
++        guard let directory = directory,
++              let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
++            return
++        }
++        let oldestDay = Self.dayFormatter.string(from: Date(timeIntervalSinceNow: -keepDuration - .days(1)))
++        let decoder = PropertyListDecoder()
++        for file in files where file.lastPathComponent.hasPrefix("loops-") {
++            let day = String(file.deletingPathExtension().lastPathComponent.dropFirst("loops-".count))
++            if day < oldestDay {
++                try? FileManager.default.removeItem(at: file)
++                continue
++            }
++            guard let data = try? Data(contentsOf: file),
++                  let entries = try? decoder.decode([Entry].self, from: data) else {
++                continue
++            }
++            entriesByDay[day] = Dictionary(entries.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
++        }
++    }
++
++    private func save(day: String) {
++        dispatchPrecondition(condition: .onQueue(queue))
++        guard let url = fileURL(day: day), let entries = entriesByDay[day] else {
++            return
++        }
++        let encoder = PropertyListEncoder()
++        encoder.outputFormat = .binary
++        if let data = try? encoder.encode(entries.values.sorted { $0.date < $1.date }) {
++            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++        }
++        // Drop days past the 7 kept.
++        let oldestDay = Self.dayFormatter.string(from: Date(timeIntervalSinceNow: -keepDuration - .days(1)))
++        for oldDay in entriesByDay.keys where oldDay < oldestDay {
++            entriesByDay[oldDay] = nil
++            if let oldURL = fileURL(day: oldDay) {
++                try? FileManager.default.removeItem(at: oldURL)
++            }
++        }
++    }
++}
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index eeb9b44..7589049 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -66,6 +66,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         let notificationCenter = NotificationCenter.default
+ 
++        // Keeps a copy of each cycle's time and prediction so the charts survive a restart (display only).
++        LoopChartHistoryCache.shared.startRecording(loopManager: deviceManager.loopManager, dosingDecisionStore: deviceManager.dosingDecisionStore)
++
+         notificationObservers += [
+             notificationCenter.addObserver(forName: .LoopDataUpdated, object: deviceManager.loopManager, queue: nil) { [weak self] note in
+                 let rawContext = note.userInfo?[LoopDataManager.LoopUpdateContextKey] as! LoopDataManager.LoopUpdateContext.RawValue
+@@ -2546,7 +2549,18 @@ extension StatusTableViewController {
+                     start: fetchStart,
+                     end: end?.addingTimeInterval(LoopStatusTimeline.missedLoopThreshold)
+                 )
+-                let successfulLoops = decisions.filter { $0.reason == "loop" && $0.errors.isEmpty }
++                let storedLoops = decisions.filter { $0.reason == "loop" && $0.errors.isEmpty }
++                LoopChartHistoryCache.shared.record(storedLoops)
++
++                // Loop's own records, plus the app's saved copy for anything missing after a restart.
++                var loopsByDate: [Date: LoopChartHistoryCache.CachedLoop] = [:]
++                for cached in await LoopChartHistoryCache.shared.loops(start: fetchStart, end: end?.addingTimeInterval(LoopStatusTimeline.missedLoopThreshold)) {
++                    loopsByDate[cached.date] = cached
++                }
++                for decision in storedLoops {
++                    loopsByDate[decision.date] = LoopChartHistoryCache.CachedLoop(date: decision.date, prediction: decision.predictedGlucose ?? [])
++                }
++                let successfulLoops = loopsByDate.values.sorted { $0.date < $1.date }
+ 
+                 var loopDates = successfulLoops.map { $0.date }
+                 if let lastLoopCompleted = lastLoopCompleted {
+@@ -2569,8 +2583,9 @@ extension StatusTableViewController {
+                 if includePastPredictions {
+                     pastPredictions = successfulLoops
+                         .filter { $0.date <= windowEnd }
+-                        .compactMap { decision -> [GlucoseValue]? in
+-                            guard let prediction = decision.predictedGlucose, prediction.count > 1,
++                        .compactMap { loop -> [GlucoseValue]? in
++                            let prediction = loop.prediction
++                            guard prediction.count > 1,
+                                   let last = prediction.last, last.startDate >= start else {
+                                 return nil
+                             }
