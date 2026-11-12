@@ -1,0 +1,169 @@
+diff --git a/Loop/Loop/View Models/BolusEntryViewModel.swift b/Loop/Loop/View Models/BolusEntryViewModel.swift
+index 20735e7..39891bd 100644
+--- a/Loop/Loop/View Models/BolusEntryViewModel.swift	
++++ b/Loop/Loop/View Models/BolusEntryViewModel.swift	
+@@ -112,6 +112,8 @@ final class BolusEntryViewModel: ObservableObject {
+     let originalCarbEntry: StoredCarbEntry?
+     let potentialCarbEntry: NewCarbEntry?
+     let selectedCarbAbsorptionTimeEmoji: String?
++    /// Meal Breakdown entries saved just before this screen opened. Loop's recommendation already includes them.
++    let savedMealCarbEntries: [NewCarbEntry]
+ 
+     @Published var recommendedBolus: HKQuantity?
+     var recommendedBolusAmount: Double? {
+@@ -171,7 +173,8 @@ final class BolusEntryViewModel: ObservableObject {
+         originalCarbEntry: StoredCarbEntry? = nil,
+         potentialCarbEntry: NewCarbEntry? = nil,
+         selectedCarbAbsorptionTimeEmoji: String? = nil,
+-        isManualGlucoseEntryEnabled: Bool = false
++        isManualGlucoseEntryEnabled: Bool = false,
++        savedMealCarbEntries: [NewCarbEntry] = []
+     ) {
+         self.delegate = delegate
+         self.now = now
+@@ -188,6 +191,7 @@ final class BolusEntryViewModel: ObservableObject {
+         self.originalCarbEntry = originalCarbEntry
+         self.potentialCarbEntry = potentialCarbEntry
+         self.selectedCarbAbsorptionTimeEmoji = selectedCarbAbsorptionTimeEmoji
++        self.savedMealCarbEntries = savedMealCarbEntries
+         
+         self.isManualGlucoseEntryEnabled = isManualGlucoseEntryEnabled
+         
+@@ -481,6 +485,20 @@ final class BolusEntryViewModel: ObservableObject {
+         }
+     }
+ 
++    /// "🍭 17 g · 🌮 55 g · 🍕 59 g" for the Meal Breakdown entries already saved, or nil.
++    var savedMealCarbEntriesString: String? {
++        guard !savedMealCarbEntries.isEmpty else {
++            return nil
++        }
++        let formatter = QuantityFormatter(for: .gram())
++        return savedMealCarbEntries.compactMap { entry -> String? in
++            guard let grams = formatter.string(from: entry.quantity) else {
++                return nil
++            }
++            return [entry.foodType, grams].compactMap { $0 }.joined(separator: " ")
++        }.joined(separator: " · ")
++    }
++
+     var carbEntryDateAndAbsorptionTimeString: String? {
+         guard let potentialCarbEntry = potentialCarbEntry else {
+             return nil
+@@ -845,7 +863,7 @@ extension BolusEntryViewModel {
+     }
+ 
+     private var hasDataToSave: Bool {
+-        manualGlucoseQuantity != nil || potentialCarbEntry != nil
++        manualGlucoseQuantity != nil || potentialCarbEntry != nil || !savedMealCarbEntries.isEmpty
+     }
+ 
+     enum ButtonChoice { case manualGlucoseEntry, actionButton }
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index eecec71..288fded 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -242,15 +242,18 @@ final class CarbEntryViewModel: ObservableObject {
+             return
+         }
+ 
++        let entries = parts.map { part in
++            NewCarbEntry(
++                date: now,
++                quantity: HKQuantity(unit: .gram(), doubleValue: part.grams),
++                startDate: part.start,
++                foodType: part.emoji,
++                absorptionTime: part.absorptionTime
++            )
++        }
++
+         Task { @MainActor in
+-            for part in parts {
+-                let entry = NewCarbEntry(
+-                    date: now,
+-                    quantity: HKQuantity(unit: .gram(), doubleValue: part.grams),
+-                    startDate: part.start,
+-                    foodType: part.emoji,
+-                    absorptionTime: part.absorptionTime
+-                )
++            for entry in entries {
+                 let saved: Bool = await withCheckedContinuation { continuation in
+                     delegate.addCarbEntry(entry, replacing: nil) { result in
+                         switch result {
+@@ -266,15 +269,17 @@ final class CarbEntryViewModel: ObservableObject {
+                     return
+                 }
+             }
+-            self.setPlainBolusViewModel()
++            self.setMealBolusViewModel(savedEntries: entries)
+         }
+     }
+ 
+-    /// The normal bolus screen, with no carb entry of its own: the meal's entries are already saved.
+-    @MainActor private func setPlainBolusViewModel() {
++    /// Loop's bolus screen for a meal whose entries are already saved: it lists them and offers
++    /// "Save without Bolusing" like a normal carb entry. Loop's recommendation already includes them.
++    @MainActor private func setMealBolusViewModel(savedEntries: [NewCarbEntry]) {
+         let viewModel = BolusEntryViewModel(
+             delegate: delegate,
+-            screenWidth: UIScreen.main.bounds.width
++            screenWidth: UIScreen.main.bounds.width,
++            savedMealCarbEntries: savedEntries
+         )
+         Task {
+             await viewModel.generateRecommendationAndStartObserving()
+diff --git a/Loop/Loop/Views/BolusEntryView.swift b/Loop/Loop/Views/BolusEntryView.swift
+index fecd236..8f09b5d 100644
+--- a/Loop/Loop/Views/BolusEntryView.swift
++++ b/Loop/Loop/Views/BolusEntryView.swift
+@@ -70,7 +70,7 @@ struct BolusEntryView: View {
+     }
+     
+     private var title: Text {
+-        if viewModel.potentialCarbEntry == nil {
++        if viewModel.potentialCarbEntry == nil && viewModel.savedMealCarbEntriesString == nil {
+             return Text("Bolus", comment: "Title for bolus entry screen")
+         }
+         return Text("Meal Bolus", comment: "Title for bolus entry screen when also entering carbs")
+@@ -169,6 +169,8 @@ struct BolusEntryView: View {
+                     ManualGlucoseEntryRow(quantity: $viewModel.manualGlucoseQuantity)
+                 } else if viewModel.potentialCarbEntry != nil {
+                     potentialCarbEntryRow
++                } else if viewModel.savedMealCarbEntriesString != nil {
++                    savedMealCarbEntriesRow
+                 } else {
+                     recommendedBolusRow
+                 }
+@@ -179,7 +181,11 @@ struct BolusEntryView: View {
+                 potentialCarbEntryRow
+             }
+ 
+-            if viewModel.isManualGlucoseEntryEnabled || viewModel.potentialCarbEntry != nil {
++            if viewModel.isManualGlucoseEntryEnabled && viewModel.savedMealCarbEntriesString != nil {
++                savedMealCarbEntriesRow
++            }
++
++            if viewModel.isManualGlucoseEntryEnabled || viewModel.potentialCarbEntry != nil || viewModel.savedMealCarbEntriesString != nil {
+                 recommendedBolusRow
+             }
+ 
+@@ -214,6 +220,19 @@ struct BolusEntryView: View {
+         }
+     }
+ 
++    @ViewBuilder
++    private var savedMealCarbEntriesRow: some View {
++        if let mealString = viewModel.savedMealCarbEntriesString {
++            HStack {
++                Text("Meal", comment: "Label for the saved Meal Breakdown entries row on bolus screen")
++                Spacer()
++                Text(mealString)
++                    .foregroundColor(Color(.carbTintColor))
++                    .modifier(LabelBackground())
++            }
++        }
++    }
++
+     private var recommendedBolusRow: some View {
+         HStack {
+             Text("Recommended Bolus", comment: "Label for recommended bolus row on bolus screen")
