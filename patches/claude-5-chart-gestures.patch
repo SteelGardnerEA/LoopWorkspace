@@ -1,0 +1,1397 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 930c353..5dd8a42 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -128,24 +128,37 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ 
+ #if DEBUG
+ /// Debug-only screen for simulator screenshots. Shows the main-screen charts with
+-/// made-up data covering 7 days. The loop status background goes through the same
+-/// `LoopStatusTimeline` code the real main screen uses. Nothing here starts Loop or
+-/// touches insulin. Launch with `-ClaudeChartPreviewHoursBack 60` to show the charts
+-/// scrolled back 60 hours.
++/// made-up data covering 7 days, drawn the same way as the main screen (wider than
++/// the screen and slid into place, with pinned y-axis labels). The loop status
++/// background goes through the same `LoopStatusTimeline` code the real main screen
++/// uses. Nothing here starts Loop or touches insulin.
++///
++/// Launch arguments:
++/// - `-ClaudeChartPreviewHoursBack 60`: scrolled back 60 hours
++/// - `-ClaudeChartPreviewZoomHours 24`: 24 hours on screen
++/// - `-ClaudeChartPreviewDragPoints 120`: frozen mid-drag, 120 points to the right
+ final class ChartPreviewViewController: UIViewController {
+     private lazy var charts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
+-    private let scrubber = ChartHistoryScrubberView(frame: .zero)
+     private var placedViews: [UIView] = []
++    private var containers: [ChartContainerView] = []
++    private let nowButton = UIButton(configuration: .filled())
+ 
+-    private let historyHours: Double = 6
+-    private let totalHours: Double = 9
++    private lazy var window: ChartTimeWindow = {
++        var window = ChartTimeWindow(duration: .hours(self.argument("-ClaudeChartPreviewZoomHours") ?? 9), futureFraction: 3.0 / 9.0)
++        if let hoursBack = self.argument("-ClaudeChartPreviewHoursBack"), hoursBack > 0 {
++            window = window.withStart(window.liveStart(now: self.now).addingTimeInterval(.hours(-hoursBack)), now: self.now)
++        }
++        return window
++    }()
++
++    private let now = Date()
+ 
+-    private var hoursBack: Double {
++    private func argument(_ name: String) -> Double? {
+         let arguments = ProcessInfo.processInfo.arguments
+-        guard let index = arguments.firstIndex(of: "-ClaudeChartPreviewHoursBack"), index + 1 < arguments.count else {
+-            return 0
++        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
++            return nil
+         }
+-        return Double(arguments[index + 1]) ?? 0
++        return Double(arguments[index + 1])
+     }
+ 
+     override func viewDidLoad() {
+@@ -154,6 +167,18 @@ final class ChartPreviewViewController: UIViewController {
+         loadSampleData()
+     }
+ 
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        if let drag = argument("-ClaudeChartPreviewDragPoints") {
++            // Freeze a drag partway, the way the charts look under a finger.
++            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
++                for container in self.containers {
++                    container.applyGestureTransform(translationX: CGFloat(drag), scaleX: 1, anchorX: 0)
++                }
++            }
++        }
++    }
++
+     override func viewDidLayoutSubviews() {
+         super.viewDidLayoutSubviews()
+         placedViews.forEach { $0.removeFromSuperview() }
+@@ -176,8 +201,20 @@ final class ChartPreviewViewController: UIViewController {
+             ("Insulin (delivery bars and active insulin, same scale)", .dose, 120),
+             ("Active Carbohydrates", .cob, 90)
+         ]
++        let viewport = window.viewport(now: now, fixedHorizontalMargin: charts.fixedHorizontalMargin, labelAreaWidth: charts.labelAreaWidth)
+         charts.prerender()
+-        for row in rows {
++        if containers.isEmpty {
++            containers = rows.map { row in
++                let container = ChartContainerView(frame: .zero)
++                container.backgroundColor = .systemBackground
++                let index = row.1.rawValue
++                container.chartGenerator = { [weak self] frame in
++                    self?.charts.chart(atIndex: index, frame: frame)?.view
++                }
++                return container
++            }
++        }
++        for (row, container) in zip(rows, containers) {
+             let title = UILabel(frame: CGRect(x: area.minX, y: y, width: area.width, height: 20))
+             title.font = .preferredFont(forTextStyle: .subheadline)
+             title.adjustsFontSizeToFitWidth = true
+@@ -186,38 +223,43 @@ final class ChartPreviewViewController: UIViewController {
+             placedViews.append(title)
+             y += 20
+ 
+-            let size = CGSize(width: area.width, height: row.2)
+-            if let chart = charts.chart(atIndex: row.1.rawValue, frame: CGRect(origin: .zero, size: size)) {
+-                chart.view.frame = CGRect(origin: CGPoint(x: area.minX, y: y), size: size)
+-                view.addSubview(chart.view)
+-                placedViews.append(chart.view)
++            container.viewport = viewport
++            container.frame = CGRect(x: area.minX, y: y, width: area.width, height: row.2)
++            if container.superview == nil {
++                view.addSubview(container)
+             }
+             y += row.2 + 10
+         }
+ 
+-        scrubber.frame = CGRect(x: area.minX - 8, y: y, width: area.width + 16, height: ChartHistoryScrubberView.preferredHeight)
+-        view.addSubview(scrubber)
+-        placedViews.append(scrubber)
++        if !window.isLive {
++            var configuration = UIButton.Configuration.filled()
++            configuration.cornerStyle = .capsule
++            configuration.image = UIImage(systemName: "arrow.right.to.line")
++            configuration.imagePlacement = .trailing
++            configuration.imagePadding = 6
++            configuration.title = "Back to now"
++            let formatter = DateIntervalFormatter()
++            formatter.dateTemplate = "EEEMMMdjmm"
++            configuration.subtitle = formatter.string(from: window.start(now: now), to: window.end(now: now))
++            nowButton.configuration = configuration
++            nowButton.sizeToFit()
++            nowButton.center = CGPoint(x: view.bounds.midX, y: min(y + 30, view.bounds.maxY - 60))
++            view.addSubview(nowButton)
++            placedViews.append(nowButton)
++        }
+     }
+ 
+     private func loadSampleData() {
+-        let now = Date()
+-        let offset = TimeInterval.hours(hoursBack)
+-        let windowStartRaw = now.addingTimeInterval(.hours(-historyHours) - offset)
+-        let start = Calendar.current.nextDate(after: windowStartRaw, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? windowStartRaw
+-        let windowEnd = start.addingTimeInterval(.hours(totalHours))
+-        let historyEnd: Date? = offset > 0 ? windowEnd : nil
++        let now = self.now
++        let range = window.renderRange(now: now)
++        let start = range.start
++        let historyEnd: Date? = window.isLive ? nil : range.end
+         let dataEnd = min(now, historyEnd ?? now)
+ 
++        charts.xAxisStep = window.axisStep
+         charts.startDate = start
+-        charts.maxEndDate = windowEnd
+-        charts.updateEndDate(charts.maxEndDate)
+-
+-        scrubber.maximumOffset = .days(7) - .hours(historyHours)
+-        scrubber.setOffset(offset)
+-        if offset > 0 {
+-            scrubber.setWindow(start: start, end: windowEnd)
+-        }
++        charts.maxEndDate = range.end
++        charts.updateEndDate(range.end)
+ 
+         let fiveMinutes = TimeInterval.minutes(5)
+         func times(from: Date, through: Date) -> [Date] {
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 616a220..c3101c7 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -146,15 +146,14 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         tableView.backgroundColor = .secondarySystemBackground
+ 
+-        // Chart history slider sits under the charts.
+-        tableView.tableFooterView = chartHistoryScrubber
++        // Drag, pinch, and double-tap on the charts.
++        configureChartGestures()
+ 
+         // Coming back to the app always shows now, so a scrolled-back chart is never mistaken for current data.
+         NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
+             .receive(on: RunLoop.main)
+             .sink { [weak self] _ in
+-                self?.chartHistoryScrubber.setOffset(0)
+-                self?.chartHistoryOffsetDidChange(0)
++                self?.returnChartsToNow()
+             }
+             .store(in: &cancellables)
+     }
+@@ -210,6 +209,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         onscreen = true
+ 
++        installChartNowButtonIfNeeded()
++        updateChartNowButton()
++
+         deviceManager.analyticsServicesManager.didDisplayStatusScreen()
+ 
+         deviceManager.checkDeliveryUncertaintyState()
+@@ -220,6 +222,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         onscreen = false
+ 
++        chartGestures.cancel()
++        chartNowButton.isHidden = true
++
+         if presentedViewController == nil {
+             navigationController?.setNavigationBarHidden(false, animated: animated)
+         }
+@@ -401,61 +406,195 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     
+     private lazy var statusCharts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
+ 
+-    /// How far back the charts are scrolled. Zero means now. Display only.
+-    private var chartHistoryOffset: TimeInterval = 0
+-
+     /// The past-predictions setting the glucose chart was last drawn with.
+     private var appliedShowsPastPredictions = UserDefaults.standard.showsPastGlucosePredictions
+ 
+-    /// Loop keeps 7 days of history, so the charts can look back that far.
+-    private static let chartHistoryLimit: TimeInterval = .days(7)
++    /// Drag, pinch, and double-tap on the charts, and the time range they show. Display only.
++    private lazy var chartGestures = ChartGestureController(window: ChartTimeWindow(duration: .hours(9), futureFraction: 0.33))
++
++    /// Whether the user has pinched to a zoom of their own. Until then the charts use
++    /// Loop's usual time span for the screen width.
++    private var chartZoomedByUser = false
++
++    /// Where the drawn charts sit relative to the screen.
++    private var chartViewport: ChartViewport?
++
++    /// New data arrived during a gesture; redraw once it settles.
++    private var chartRedrawPending = false
++
++    private lazy var chartNowButton: UIButton = {
++        var configuration = UIButton.Configuration.filled()
++        configuration.cornerStyle = .capsule
++        configuration.image = UIImage(systemName: "arrow.right.to.line")
++        configuration.imagePlacement = .trailing
++        configuration.imagePadding = 6
++        configuration.titleAlignment = .center
++        let button = UIButton(configuration: configuration)
++        button.translatesAutoresizingMaskIntoConstraints = false
++        button.isHidden = true
++        button.accessibilityLabel = NSLocalizedString("Back to now", comment: "Accessibility label for the button that returns the charts to the current time")
++        button.addAction(UIAction { [weak self] _ in
++            self?.returnChartsToNow()
++        }, for: .touchUpInside)
++        return button
++    }()
+ 
+-    private lazy var chartHistoryScrubber: ChartHistoryScrubberView = {
+-        let scrubber = ChartHistoryScrubberView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: ChartHistoryScrubberView.preferredHeight))
+-        scrubber.onChange = { [weak self] offset in
+-            self?.chartHistoryOffsetDidChange(offset)
+-        }
+-        return scrubber
++    private lazy var chartRangeFormatter: DateIntervalFormatter = {
++        let formatter = DateIntervalFormatter()
++        formatter.dateTemplate = "EEEMMMdjmm"
++        return formatter
+     }()
+ 
+-    private func chartHistoryOffsetDidChange(_ offset: TimeInterval) {
+-        guard offset != chartHistoryOffset else {
+-            return
++    private func configureChartGestures() {
++        chartGestures.inspectRecognizer = charts.gestureRecognizer
++        chartGestures.chartContainers = { [weak self] in
++            self?.visibleChartCells.map { $0.chartContainer } ?? []
++        }
++        chartGestures.isChartLocation = { [weak self] point in
++            guard let self = self, let indexPath = self.tableView.indexPathForRow(at: point) else {
++                return false
++            }
++            return Section(rawValue: indexPath.section) == .charts
++        }
++        chartGestures.plotWidth = { [weak self] in
++            guard let self = self else {
++                return 0
++            }
++            let width = self.visibleChartCells.first?.chartContainer.bounds.width ?? self.tableView.bounds.width
++            return max(0, width - self.charts.fixedHorizontalMargin)
++        }
++        chartGestures.onCommit = { [weak self] window in
++            self?.chartWindowDidChange(window)
++        }
++        chartGestures.onSettle = { [weak self] in
++            guard let self = self, self.chartRedrawPending else {
++                return
++            }
++            self.redrawCharts()
++        }
++        chartGestures.onDoubleTap = { [weak self] point in
++            guard let self = self,
++                  let indexPath = self.tableView.indexPathForRow(at: point),
++                  Section(rawValue: indexPath.section) == .charts,
++                  let row = ChartRow(rawValue: indexPath.row) else {
++                return
++            }
++            self.openChartDetail(row, sender: indexPath)
++        }
++        chartGestures.install(on: tableView)
++    }
++
++    private var visibleChartCells: [ChartTableViewCell] {
++        return tableView.visibleCells.compactMap { $0 as? ChartTableViewCell }
++    }
++
++    /// Called when a drag, flick, or pinch finishes.
++    private func chartWindowDidChange(_ window: ChartTimeWindow) {
++        if window.duration != statusChartsDefaultDuration {
++            chartZoomedByUser = true
++        }
++        chartGestures.window = window
++        applyChartWindow(window, now: Date())
++
++        // Redraw right away with the data already loaded, then load data for the new range.
++        charts.prerender()
++        for cell in visibleChartCells {
++            cell.chartContainer.setNeedsLayout()
++            cell.chartContainer.layoutIfNeeded()
+         }
+-        chartHistoryOffset = offset
+         refreshContext.formUnion(RefreshContext.all)
+         reloadData(animated: false)
+     }
+ 
++    private func returnChartsToNow() {
++        guard !chartGestures.window.isLive else {
++            return
++        }
++        chartGestures.cancel()
++        var window = chartGestures.window
++        window.pinnedStart = nil
++        chartWindowDidChange(window)
++    }
++
++    /// Loop's usual visible time span for this screen width.
++    private var statusChartsDefaultDuration: TimeInterval = .hours(9)
++
++    /// Sets the charts' drawn time range and where it sits on screen.
++    private func applyChartWindow(_ window: ChartTimeWindow, now: Date) {
++        let range = window.renderRange(now: now)
++        if charts.startDate != range.start || charts.maxEndDate != range.end {
++            refreshContext.formUnion(RefreshContext.all)
++        }
++        charts.xAxisStep = window.axisStep
++        charts.startDate = range.start
++        charts.maxEndDate = range.end
++        charts.updateEndDate(range.end)
++
++        let viewport = window.viewport(now: now, fixedHorizontalMargin: charts.fixedHorizontalMargin, labelAreaWidth: charts.labelAreaWidth)
++        chartViewport = viewport
++        for cell in visibleChartCells {
++            cell.chartViewport = viewport
++        }
++        updateChartNowButton()
++    }
++
++    private func installChartNowButtonIfNeeded() {
++        guard chartNowButton.superview == nil, let navigationView = navigationController?.view else {
++            return
++        }
++        navigationView.addSubview(chartNowButton)
++        var constraints = [chartNowButton.centerXAnchor.constraint(equalTo: navigationView.centerXAnchor)]
++        if let toolbar = navigationController?.toolbar {
++            constraints.append(chartNowButton.bottomAnchor.constraint(equalTo: toolbar.topAnchor, constant: -12))
++        } else {
++            constraints.append(chartNowButton.bottomAnchor.constraint(equalTo: navigationView.safeAreaLayoutGuide.bottomAnchor, constant: -12))
++        }
++        NSLayoutConstraint.activate(constraints)
++    }
++
++    private func updateChartNowButton() {
++        let window = chartGestures.window
++        guard onscreen, !window.isLive else {
++            chartNowButton.isHidden = true
++            return
++        }
++        let now = Date()
++        var configuration = chartNowButton.configuration ?? .filled()
++        configuration.title = NSLocalizedString("Back to now", comment: "Button that returns the charts to the current time")
++        configuration.subtitle = chartRangeFormatter.string(from: window.start(now: now), to: window.end(now: now))
++        chartNowButton.configuration = configuration
++        chartNowButton.isHidden = false
++    }
++
+     override func createChartsManager() -> ChartsManager {
+         return statusCharts
+     }
+ 
+     private func updateChartDateRange() {
+-        // How far back should we show data? Use the screen size as a guide.
++        // How much time to show by default? Use the screen size as a guide, as Loop always has.
+         let availableWidth = (refreshContext.newSize ?? tableView.bounds.size).width - charts.fixedHorizontalMargin
+ 
+-        let totalHours = floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour))
++        let totalHours = max(1, floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour)))
+         let futureHours = ceil(deviceManager.doseStore.longestEffectDuration.hours)
+         let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
+ 
+-        // The slider can move the window back until its left edge reaches the oldest saved history.
+-        let maximumOffset = max(0, Self.chartHistoryLimit - .hours(historyHours))
+-        chartHistoryScrubber.maximumOffset = maximumOffset
+-        chartHistoryOffset = min(chartHistoryOffset, maximumOffset)
+-
+-        let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours) - chartHistoryOffset)
+-        let chartStartDate = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
+-        if charts.startDate != chartStartDate {
+-            refreshContext.formUnion(RefreshContext.all)
++        statusChartsDefaultDuration = .hours(totalHours)
++        let now = Date()
++        var window = chartGestures.window
++        window.futureFraction = min(max(0, totalHours - historyHours) / totalHours, 0.9)
++        if !chartZoomedByUser {
++            window.duration = statusChartsDefaultDuration
+         }
+-        charts.startDate = chartStartDate
+-        charts.maxEndDate = chartStartDate.addingTimeInterval(.hours(totalHours))
+-        charts.updateEndDate(charts.maxEndDate)
+-
+-        if chartHistoryOffset > 0 {
+-            chartHistoryScrubber.setWindow(start: chartStartDate, end: charts.maxEndDate)
++        if let pinnedStart = window.pinnedStart {
++            // Keeps a scrolled-back window inside the 7 days of saved history.
++            window = window.withStart(pinnedStart, now: now)
++        }
++        // Leave the charts alone mid-gesture; the gesture's end sets the new range.
++        guard !chartGestures.isInteracting else {
++            return
+         }
++        chartGestures.window = window
++        applyChartWindow(window, now: now)
+     }
+ 
+     override func reloadData(animated: Bool = false) {
+@@ -507,7 +646,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         var carbsOnBoard: HKQuantity?
+         let startDate = charts.startDate
+         // When scrolled back, only fetch the visible window so nothing is drawn past its right edge.
+-        let historyEndDate: Date? = chartHistoryOffset > 0 ? charts.maxEndDate : nil
++        let historyEndDate: Date? = chartGestures.window.isLive ? nil : charts.maxEndDate
+         let basalDeliveryState = self.basalDeliveryState
+         let automaticDosingEnabled = automaticDosingStatus.automaticDosingEnabled
+ 
+@@ -934,6 +1073,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     }
+ 
+     private func redrawCharts() {
++        // Never swap the charts out from under a finger; redraw when the gesture settles.
++        guard !chartGestures.isInteracting else {
++            chartRedrawPending = true
++            return
++        }
++        chartRedrawPending = false
+         tableView.beginUpdates()
+         charts.prerender()
+         for case let cell as ChartTableViewCell in tableView.visibleCells {
+@@ -1102,6 +1247,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             return cell
+         case .charts:
+             let cell = tableView.dequeueReusableCell(withIdentifier: ChartTableViewCell.className, for: indexPath) as! ChartTableViewCell
++            cell.chartViewport = chartViewport
+ 
+             switch ChartRow(rawValue: indexPath.row)! {
+             case .glucose:
+@@ -1381,16 +1527,25 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 }
+             }
+         case .charts:
+-            switch ChartRow(rawValue: indexPath.row)! {
+-            case .glucose:
+-                if automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled {
+-                    performSegue(withIdentifier: PredictionTableViewController.className, sender: indexPath)
+-                }
+-            case .dose:
+-                performSegue(withIdentifier: InsulinDeliveryTableViewController.className, sender: indexPath)
+-            case .cob:
+-                performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
++            // Charts open with a double-tap, so a single tap while dragging does nothing.
++            tableView.deselectRow(at: indexPath, animated: false)
++        }
++    }
++
++    override func tableView(_ tableView: UITableView, shouldHighlightRowAt indexPath: IndexPath) -> Bool {
++        return Section(rawValue: indexPath.section) != .charts
++    }
++
++    private func openChartDetail(_ row: ChartRow, sender indexPath: IndexPath) {
++        switch row {
++        case .glucose:
++            if automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled {
++                performSegue(withIdentifier: PredictionTableViewController.className, sender: indexPath)
+             }
++        case .dose:
++            performSegue(withIdentifier: InsulinDeliveryTableViewController.className, sender: indexPath)
++        case .cob:
++            performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
+         }
+     }
+ 
+diff --git a/LoopKit/LoopKit.xcodeproj/project.pbxproj b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+index c43169d..25573ab 100644
+--- a/LoopKit/LoopKit.xcodeproj/project.pbxproj
++++ b/LoopKit/LoopKit.xcodeproj/project.pbxproj
+@@ -536,7 +536,7 @@
+ 		A9D3FEFF2A6C1944000C891D /* DoseChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEF92A6C1942000C891D /* DoseChart.swift */; };
+ 		A9D3FF002A6C1944000C891D /* ChartConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */; };
+ 		C1A0DE5A0000000000000001 /* LoopStatusBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */; };
+-		C1A0DE5A0000000000000003 /* ChartHistoryScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */; };
++		C1A0DE5A0000000000000003 /* ChartGestures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A0DE5A0000000000000004 /* ChartGestures.swift */; };
+ 		A9D3FF012A6C1944000C891D /* CarbEffectChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */; };
+ 		A9D3FF022A6C1944000C891D /* COBChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFC2A6C1943000C891D /* COBChart.swift */; };
+ 		A9D3FF032A6C1944000C891D /* IOBChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D3FEFD2A6C1943000C891D /* IOBChart.swift */; };
+@@ -1581,7 +1581,7 @@
+ 		A9D3FEF92A6C1942000C891D /* DoseChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DoseChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartConstants.swift; sourceTree = "<group>"; };
+ 		C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoopStatusBackground.swift; sourceTree = "<group>"; };
+-		C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartHistoryScrubberView.swift; sourceTree = "<group>"; };
++		C1A0DE5A0000000000000004 /* ChartGestures.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChartGestures.swift; sourceTree = "<group>"; };
+ 		A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CarbEffectChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFC2A6C1943000C891D /* COBChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = COBChart.swift; sourceTree = "<group>"; };
+ 		A9D3FEFD2A6C1943000C891D /* IOBChart.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IOBChart.swift; sourceTree = "<group>"; };
+@@ -3168,7 +3168,7 @@
+ 				A9D3FEFB2A6C1943000C891D /* CarbEffectChart.swift */,
+ 				A9D3FEFA2A6C1943000C891D /* ChartConstants.swift */,
+ 				C1A0DE5A0000000000000002 /* LoopStatusBackground.swift */,
+-				C1A0DE5A0000000000000004 /* ChartHistoryScrubberView.swift */,
++				C1A0DE5A0000000000000004 /* ChartGestures.swift */,
+ 				A9D3FEFC2A6C1943000C891D /* COBChart.swift */,
+ 				A9D3FEF92A6C1942000C891D /* DoseChart.swift */,
+ 				E9086B4424B53CC50062F5C8 /* GlucoseChart.swift */,
+@@ -4058,7 +4058,7 @@
+ 				B455F3A425FF7FF0000ED456 /* CorrectionRangeOverridesEditorViewModel.swift in Sources */,
+ 				A9D3FF002A6C1944000C891D /* ChartConstants.swift in Sources */,
+ 				C1A0DE5A0000000000000001 /* LoopStatusBackground.swift in Sources */,
+-				C1A0DE5A0000000000000003 /* ChartHistoryScrubberView.swift in Sources */,
++				C1A0DE5A0000000000000003 /* ChartGestures.swift in Sources */,
+ 				89BE75CB2464BC2000B145D9 /* AlertContent.swift in Sources */,
+ 				43BA7184201EE7090058961E /* TextFieldTableViewController.swift in Sources */,
+ 				1452F4B22A8521CD00F8B9E4 /* TextFieldRow.swift in Sources */,
+diff --git a/LoopKit/LoopKitUI/Charts/ChartGestures.swift b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+new file mode 100644
+index 0000000..414fa09
+--- /dev/null
++++ b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+@@ -0,0 +1,444 @@
++//
++//  ChartGestures.swift
++//  LoopKitUI
++//
++//  Display only. Trio-style gestures for a stack of time-aligned charts:
++//  drag pans through time (with glide after a flick), pinch zooms between
++//  1 and 24 hours, and double-tap is reported to the owner.
++//
++//  Like Trio, each chart is drawn once over a wider time range than is
++//  visible. While a finger is down the drawn charts are only slid or
++//  stretched, which keeps gestures smooth. When the gesture ends, the
++//  new time window is committed and the charts are redrawn.
++//
++
++import Foundation
++import QuartzCore
++import UIKit
++
++/// Where the drawn chart sits relative to the visible area.
++public struct ChartViewport: Equatable {
++    /// Drawn time span divided by visible time span (1 or more).
++    public var renderWidthScale: CGFloat
++    /// Where the visible start sits within the drawn time span, from 0 to 1.
++    public var leadingFraction: CGFloat
++    /// Horizontal space the chart uses outside its plot area.
++    public var fixedHorizontalMargin: CGFloat
++    /// Width of the y-axis label area on the chart's left.
++    public var labelAreaWidth: CGFloat
++
++    public init(renderWidthScale: CGFloat, leadingFraction: CGFloat, fixedHorizontalMargin: CGFloat, labelAreaWidth: CGFloat) {
++        self.renderWidthScale = renderWidthScale
++        self.leadingFraction = leadingFraction
++        self.fixedHorizontalMargin = fixedHorizontalMargin
++        self.labelAreaWidth = labelAreaWidth
++    }
++}
++
++/// The time range shown by the charts.
++public struct ChartTimeWindow: Equatable {
++    public static let minimumDuration: TimeInterval = .hours(1)
++    public static let maximumDuration: TimeInterval = .hours(24)
++    /// Loop keeps 7 days of history.
++    public static let historyLimit: TimeInterval = .hours(24 * 7)
++
++    /// Visible time span.
++    public var duration: TimeInterval
++    /// Share of the window after now when following now (the forecast area).
++    public var futureFraction: Double
++    /// Start of the window when the user has moved back in time. Nil means it follows now.
++    public var pinnedStart: Date?
++
++    public init(duration: TimeInterval, futureFraction: Double, pinnedStart: Date? = nil) {
++        self.duration = min(max(duration, Self.minimumDuration), Self.maximumDuration)
++        self.futureFraction = min(max(futureFraction, 0), 0.9)
++        self.pinnedStart = pinnedStart
++    }
++
++    public var isLive: Bool {
++        return pinnedStart == nil
++    }
++
++    public func liveStart(now: Date) -> Date {
++        return now.addingTimeInterval(-duration * (1 - futureFraction))
++    }
++
++    public func start(now: Date) -> Date {
++        return pinnedStart ?? liveStart(now: now)
++    }
++
++    public func end(now: Date) -> Date {
++        return start(now: now).addingTimeInterval(duration)
++    }
++
++    public func oldestStart(now: Date) -> Date {
++        return now.addingTimeInterval(-Self.historyLimit)
++    }
++
++    /// Spacing of the time labels, wider when zoomed out so they don't overlap.
++    public var axisStep: TimeInterval {
++        if duration <= .hours(8) {
++            return .hours(1)
++        } else if duration <= .hours(14) {
++            return .hours(2)
++        } else if duration <= .hours(20) {
++            return .hours(3)
++        } else {
++            return .hours(4)
++        }
++    }
++
++    /// The range to draw: the visible window plus room on each side to slide into,
++    /// aligned to the time label spacing so the time axis matches it exactly.
++    public func renderRange(now: Date) -> DateInterval {
++        let buffer = min(duration * 2, .hours(24))
++        let visibleStart = start(now: now)
++        let visibleEnd = end(now: now)
++        let latestEnd = max(visibleEnd, liveStart(now: now).addingTimeInterval(duration))
++
++        let rawStart = max(visibleStart.addingTimeInterval(-buffer), oldestStart(now: now))
++        let rawEnd = max(min(visibleEnd.addingTimeInterval(buffer), latestEnd), visibleEnd)
++
++        let step = axisStep
++        let alignedStart = (rawStart.timeIntervalSince1970 / step).rounded(.down) * step
++        let alignedEnd = (rawEnd.timeIntervalSince1970 / step).rounded(.up) * step
++        return DateInterval(
++            start: Date(timeIntervalSince1970: min(alignedStart, visibleStart.timeIntervalSince1970)),
++            end: Date(timeIntervalSince1970: max(alignedEnd, visibleEnd.timeIntervalSince1970))
++        )
++    }
++
++    public func viewport(now: Date, fixedHorizontalMargin: CGFloat, labelAreaWidth: CGFloat) -> ChartViewport {
++        let range = renderRange(now: now)
++        return ChartViewport(
++            renderWidthScale: CGFloat(range.duration / duration),
++            leadingFraction: CGFloat(start(now: now).timeIntervalSince(range.start) / range.duration),
++            fixedHorizontalMargin: fixedHorizontalMargin,
++            labelAreaWidth: labelAreaWidth
++        )
++    }
++
++    /// The same window moved to start at `newStart`. Snaps back to following now
++    /// when it reaches the present, and never goes past the oldest saved history.
++    public func withStart(_ newStart: Date, now: Date) -> ChartTimeWindow {
++        var window = self
++        if newStart >= liveStart(now: now).addingTimeInterval(-.minutes(1)) {
++            window.pinnedStart = nil
++        } else {
++            window.pinnedStart = max(newStart, oldestStart(now: now))
++        }
++        return window
++    }
++
++    /// Dragging right by `points` moves back in time.
++    public func panned(byPoints points: CGFloat, plotWidth: CGFloat, now: Date) -> ChartTimeWindow {
++        guard plotWidth > 0 else {
++            return self
++        }
++        let seconds = TimeInterval(points) * duration / TimeInterval(plotWidth)
++        return withStart(start(now: now).addingTimeInterval(-seconds), now: now)
++    }
++
++    /// Zooms to a new duration, keeping the time under `anchorFraction` (0 is the left
++    /// edge, 1 the right) in place. While following now it keeps following now.
++    public func zoomed(toDuration rawDuration: TimeInterval, anchorFraction: Double, now: Date) -> ChartTimeWindow {
++        let newDuration = min(max(rawDuration, Self.minimumDuration), Self.maximumDuration)
++        let anchorDate = start(now: now).addingTimeInterval(duration * anchorFraction)
++        var window = self
++        window.duration = newDuration
++        guard !isLive else {
++            return window
++        }
++        return window.withStart(anchorDate.addingTimeInterval(-newDuration * anchorFraction), now: now)
++    }
++}
++
++/// Runs drag, pinch, and double-tap on a table of chart cells.
++public final class ChartGestureController: NSObject, UIGestureRecognizerDelegate {
++
++    /// The committed time window the charts are drawn for.
++    public var window: ChartTimeWindow
++
++    /// The chart containers currently on screen.
++    public var chartContainers: () -> [ChartContainerView] = { [] }
++
++    /// Whether a point (in the table's coordinates) is over a chart.
++    public var isChartLocation: (CGPoint) -> Bool = { _ in false }
++
++    /// Width of the visible plot area.
++    public var plotWidth: () -> CGFloat = { 0 }
++
++    /// The press-and-hold inspect recognizer. Panning never starts while it is active.
++    public weak var inspectRecognizer: UIGestureRecognizer?
++
++    /// Called with the new window when a drag, flick, or pinch finishes.
++    public var onCommit: ((ChartTimeWindow) -> Void)?
++
++    /// Called with the location (in the table's coordinates) of a double-tap on a chart.
++    public var onDoubleTap: ((CGPoint) -> Void)?
++
++    /// Called after every drag, flick, or pinch ends, whether or not the window changed.
++    public var onSettle: (() -> Void)?
++
++    public var now: () -> Date = { Date() }
++
++    private weak var tableView: UITableView?
++    private let panRecognizer = UIPanGestureRecognizer()
++    private let pinchRecognizer = UIPinchGestureRecognizer()
++    private let doubleTapRecognizer = UITapGestureRecognizer()
++
++    // Live gesture state, in points of the visible plot.
++    private var translation: CGFloat = 0
++    private var scale: CGFloat = 1
++    private var anchorX: CGFloat = 0
++    private var displayLink: CADisplayLink?
++    private var velocity: CGFloat = 0
++    private var lastFrameTime: CFTimeInterval = 0
++
++    public init(window: ChartTimeWindow) {
++        self.window = window
++        super.init()
++    }
++
++    deinit {
++        displayLink?.invalidate()
++    }
++
++    public func install(on tableView: UITableView) {
++        self.tableView = tableView
++
++        panRecognizer.addTarget(self, action: #selector(handlePan(_:)))
++        panRecognizer.delegate = self
++        panRecognizer.maximumNumberOfTouches = 1
++        tableView.addGestureRecognizer(panRecognizer)
++        // Vertical scrolling waits for a horizontal chart drag to be ruled out.
++        tableView.panGestureRecognizer.require(toFail: panRecognizer)
++
++        pinchRecognizer.addTarget(self, action: #selector(handlePinch(_:)))
++        pinchRecognizer.delegate = self
++        tableView.addGestureRecognizer(pinchRecognizer)
++
++        doubleTapRecognizer.addTarget(self, action: #selector(handleDoubleTap(_:)))
++        doubleTapRecognizer.numberOfTapsRequired = 2
++        doubleTapRecognizer.cancelsTouchesInView = false
++        doubleTapRecognizer.delegate = self
++        tableView.addGestureRecognizer(doubleTapRecognizer)
++    }
++
++    /// True while a finger is moving the charts or they are still gliding.
++    public var isInteracting: Bool {
++        return displayLink != nil
++            || panRecognizer.state == .began || panRecognizer.state == .changed
++            || pinchRecognizer.state == .began || pinchRecognizer.state == .changed
++    }
++
++    /// Stops any glide and puts the charts back where they were drawn.
++    public func cancel() {
++        stopGlide()
++        translation = 0
++        scale = 1
++        applyTransforms()
++    }
++
++    // MARK: - UIGestureRecognizerDelegate
++
++    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
++        guard let tableView = tableView else {
++            return false
++        }
++        return isChartLocation(touch.location(in: tableView))
++    }
++
++    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
++        guard let tableView = tableView, isChartLocation(gestureRecognizer.location(in: tableView)) else {
++            return false
++        }
++        if gestureRecognizer === panRecognizer {
++            if let inspect = inspectRecognizer, inspect.state == .began || inspect.state == .changed {
++                return false
++            }
++            // Only clearly sideways drags; up and down still scrolls the screen.
++            let velocity = panRecognizer.velocity(in: tableView)
++            return abs(velocity.x) > abs(velocity.y) * 1.2
++        }
++        return true
++    }
++
++    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
++        // Double-tap can run alongside anything; pan and pinch are exclusive of each other.
++        return gestureRecognizer === doubleTapRecognizer || otherGestureRecognizer === doubleTapRecognizer
++    }
++
++    // MARK: - Pan
++
++    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
++        guard let tableView = tableView else {
++            return
++        }
++        switch recognizer.state {
++        case .began:
++            stopGlide()
++            scale = 1
++            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            applyTransforms()
++        case .changed:
++            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            applyTransforms()
++        case .ended:
++            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            applyTransforms()
++            let flick = recognizer.velocity(in: tableView).x
++            if abs(flick) > 250 {
++                startGlide(velocity: flick)
++            } else {
++                commit()
++            }
++        case .cancelled, .failed:
++            commit()
++        default:
++            break
++        }
++    }
++
++    /// Limits a drag to what is drawn, to now on the right, and to 7 days back on the left.
++    private func clampedTranslation(_ proposed: CGFloat) -> CGFloat {
++        let width = plotWidth()
++        guard width > 0 else {
++            return 0
++        }
++        let date = now()
++        let secondsPerPoint = window.duration / TimeInterval(width)
++        let range = window.renderRange(now: date)
++        let visibleStart = window.start(now: date)
++        let visibleEnd = window.end(now: date)
++
++        // Positive moves back in time.
++        let backLimit = min(
++            visibleStart.timeIntervalSince(range.start),
++            visibleStart.timeIntervalSince(window.oldestStart(now: date))
++        )
++        let forwardLimit = min(
++            range.end.timeIntervalSince(visibleEnd),
++            window.liveStart(now: date).timeIntervalSince(visibleStart)
++        )
++        let maximum = CGFloat(max(0, backLimit) / secondsPerPoint)
++        let minimum = -CGFloat(max(0, forwardLimit) / secondsPerPoint)
++        return min(max(proposed, minimum), maximum)
++    }
++
++    // MARK: - Glide
++
++    private func startGlide(velocity: CGFloat) {
++        stopGlide()
++        self.velocity = velocity
++        lastFrameTime = CACurrentMediaTime()
++        let link = CADisplayLink(target: self, selector: #selector(glideStep(_:)))
++        link.add(to: .main, forMode: .common)
++        displayLink = link
++    }
++
++    private func stopGlide() {
++        displayLink?.invalidate()
++        displayLink = nil
++    }
++
++    @objc private func glideStep(_ link: CADisplayLink) {
++        let time = CACurrentMediaTime()
++        let elapsed = CGFloat(min(time - lastFrameTime, 0.05))
++        lastFrameTime = time
++
++        let proposed = translation + velocity * elapsed
++        let clamped = clampedTranslation(proposed)
++        translation = clamped
++        applyTransforms()
++
++        // Slows smoothly; about the feel of a scroll view.
++        velocity *= pow(0.94, elapsed * 60)
++        if abs(velocity) < 40 || clamped != proposed {
++            stopGlide()
++            commit()
++        }
++    }
++
++    // MARK: - Pinch
++
++    @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
++        guard let container = chartContainers().first else {
++            return
++        }
++        switch recognizer.state {
++        case .began:
++            stopGlide()
++            translation = 0
++            if window.isLive, let viewport = container.viewport {
++                // Following now: zoom around "now" so it stays put, matching what the commit does.
++                anchorX = viewport.labelAreaWidth + plotWidth() * CGFloat(1 - window.futureFraction)
++            } else {
++                anchorX = recognizer.location(in: container).x
++            }
++            scale = clampedScale(recognizer.scale)
++            applyTransforms()
++        case .changed:
++            scale = clampedScale(recognizer.scale)
++            applyTransforms()
++        case .ended, .cancelled, .failed:
++            commit()
++        default:
++            break
++        }
++    }
++
++    /// Keeps the zoom between 1 and 24 hours on screen.
++    private func clampedScale(_ proposed: CGFloat) -> CGFloat {
++        guard proposed > 0 else {
++            return 1
++        }
++        let newDuration = min(max(window.duration / TimeInterval(proposed), ChartTimeWindow.minimumDuration), ChartTimeWindow.maximumDuration)
++        return CGFloat(window.duration / newDuration)
++    }
++
++    // MARK: - Double-tap
++
++    @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
++        guard recognizer.state == .ended, let tableView = tableView else {
++            return
++        }
++        onDoubleTap?(recognizer.location(in: tableView))
++    }
++
++    // MARK: - Drawing and committing
++
++    private func applyTransforms() {
++        for container in chartContainers() {
++            container.applyGestureTransform(translationX: translation, scaleX: scale, anchorX: anchorX)
++        }
++    }
++
++    private func commit() {
++        let date = now()
++        var newWindow = window
++
++        if scale != 1, let container = chartContainers().first, let viewport = container.viewport {
++            let plot = plotWidth()
++            let fraction = plot > 0 ? Double((anchorX - viewport.labelAreaWidth) / plot) : 0.5
++            newWindow = window.zoomed(
++                toDuration: window.duration / TimeInterval(scale),
++                anchorFraction: min(max(fraction, 0), 1),
++                now: date
++            )
++        } else if translation != 0 {
++            newWindow = window.panned(byPoints: translation, plotWidth: plotWidth(), now: date)
++        }
++
++        translation = 0
++        scale = 1
++
++        if newWindow != window {
++            window = newWindow
++            onCommit?(newWindow)
++        }
++        // Whatever the owner did not redraw goes back to rest.
++        applyTransforms()
++        onSettle?()
++    }
++}
+diff --git a/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift b/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift
+deleted file mode 100644
+index 1f8aaa4..0000000
+--- a/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift
++++ /dev/null
+@@ -1,197 +0,0 @@
+-//
+-//  ChartHistoryScrubberView.swift
+-//  LoopKitUI
+-//
+-//  Display only. A slider under the main-screen charts that moves all of them
+-//  back in time together, with a button to return to now.
+-//
+-
+-import Foundation
+-import LoopKit
+-import UIKit
+-
+-public final class ChartHistoryScrubberView: UIView {
+-
+-    public static let preferredHeight: CGFloat = 92
+-
+-    /// Called with the new offset (how far back the charts should look) when the
+-    /// slider is released or "Back to now" is tapped.
+-    public var onChange: ((TimeInterval) -> Void)?
+-
+-    /// The furthest back the slider can go.
+-    public var maximumOffset: TimeInterval = .hours(24 * 7) {
+-        didSet {
+-            if offset > maximumOffset {
+-                setOffset(maximumOffset)
+-            } else {
+-                updateSlider()
+-            }
+-            updateHints()
+-        }
+-    }
+-
+-    /// How far back the charts currently look. Zero means now.
+-    public private(set) var offset: TimeInterval = 0
+-
+-    private let slider = UISlider()
+-    private let titleLabel = UILabel()
+-    private let nowButton = UIButton(type: .system)
+-    private let oldestHint = UILabel()
+-    private let newestHint = UILabel()
+-
+-    private static let step: TimeInterval = .minutes(15)
+-
+-    private lazy var agoFormatter: DateComponentsFormatter = {
+-        let formatter = DateComponentsFormatter()
+-        formatter.unitsStyle = .full
+-        formatter.allowedUnits = [.day, .hour, .minute]
+-        formatter.maximumUnitCount = 2
+-        return formatter
+-    }()
+-
+-    private lazy var windowFormatter: DateIntervalFormatter = {
+-        let formatter = DateIntervalFormatter()
+-        formatter.dateTemplate = "EEEMMMdjmm"
+-        return formatter
+-    }()
+-
+-    public override init(frame: CGRect) {
+-        super.init(frame: frame)
+-        setUp()
+-    }
+-
+-    public required init?(coder: NSCoder) {
+-        super.init(coder: coder)
+-        setUp()
+-    }
+-
+-    private func setUp() {
+-        backgroundColor = .clear
+-
+-        titleLabel.font = .preferredFont(forTextStyle: .footnote)
+-        titleLabel.textColor = .secondaryLabel
+-        titleLabel.adjustsFontSizeToFitWidth = true
+-        titleLabel.minimumScaleFactor = 0.8
+-        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+-
+-        nowButton.setTitle(LocalizedString("Back to now", comment: "Button that returns the main-screen charts to the current time"), for: .normal)
+-        nowButton.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
+-        nowButton.setContentHuggingPriority(.required, for: .horizontal)
+-        nowButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+-        nowButton.addTarget(self, action: #selector(returnToNow), for: .touchUpInside)
+-
+-        // Left end is the oldest history, right end is now.
+-        slider.minimumValue = 0
+-        slider.maximumValue = 1
+-        slider.value = 1
+-        slider.addTarget(self, action: #selector(sliderMoved), for: .valueChanged)
+-        slider.addTarget(self, action: #selector(sliderReleased), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+-        slider.accessibilityLabel = LocalizedString("Chart history", comment: "Accessibility label for the chart history slider")
+-
+-        for hint in [oldestHint, newestHint] {
+-            hint.font = .preferredFont(forTextStyle: .caption2)
+-            hint.textColor = .tertiaryLabel
+-        }
+-        newestHint.text = LocalizedString("Now", comment: "Right end of the chart history slider")
+-        newestHint.textAlignment = .right
+-
+-        let topRow = UIStackView(arrangedSubviews: [titleLabel, nowButton])
+-        topRow.axis = .horizontal
+-        topRow.spacing = 8
+-        topRow.alignment = .center
+-
+-        let hintsRow = UIStackView(arrangedSubviews: [oldestHint, newestHint])
+-        hintsRow.axis = .horizontal
+-        hintsRow.distribution = .fillEqually
+-
+-        let stack = UIStackView(arrangedSubviews: [topRow, slider, hintsRow])
+-        stack.axis = .vertical
+-        stack.spacing = 2
+-        stack.translatesAutoresizingMaskIntoConstraints = false
+-        addSubview(stack)
+-
+-        NSLayoutConstraint.activate([
+-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6)
+-        ])
+-
+-        updateHints()
+-        updateTitle(window: nil)
+-    }
+-
+-    /// Moves the slider. Calls `onChange` only when `notify` is true.
+-    public func setOffset(_ newOffset: TimeInterval, notify: Bool = false) {
+-        offset = Self.rounded(min(max(0, newOffset), maximumOffset))
+-        updateSlider()
+-        nowButton.isEnabled = offset > 0
+-        if notify {
+-            onChange?(offset)
+-        }
+-    }
+-
+-    /// Shows the time range the charts are displaying.
+-    public func setWindow(start: Date, end: Date) {
+-        updateTitle(window: DateInterval(start: start, end: max(start, end)))
+-    }
+-
+-    private func updateSlider() {
+-        guard maximumOffset > 0 else {
+-            slider.value = 1
+-            return
+-        }
+-        slider.value = Float(1 - offset / maximumOffset)
+-    }
+-
+-    private func updateHints() {
+-        oldestHint.text = String(
+-            format: LocalizedString("%@ ago", comment: "Left end of the chart history slider. (1: how long ago)"),
+-            agoFormatter.string(from: maximumOffset) ?? ""
+-        )
+-    }
+-
+-    private func updateTitle(window: DateInterval?) {
+-        if offset == 0 {
+-            titleLabel.text = LocalizedString("Showing now. Drag to look back.", comment: "Chart history slider title when showing the current time")
+-        } else if let window = window {
+-            titleLabel.text = windowFormatter.string(from: window.start, to: window.end)
+-        } else {
+-            titleLabel.text = agoDescription(offset)
+-        }
+-        nowButton.isEnabled = offset > 0
+-    }
+-
+-    private func agoDescription(_ offset: TimeInterval) -> String {
+-        guard offset > 0 else {
+-            return LocalizedString("Now", comment: "Right end of the chart history slider")
+-        }
+-        return String(
+-            format: LocalizedString("%@ ago", comment: "Left end of the chart history slider. (1: how long ago)"),
+-            agoFormatter.string(from: offset) ?? ""
+-        )
+-    }
+-
+-    private func offsetForSlider() -> TimeInterval {
+-        return Self.rounded(TimeInterval(1 - slider.value) * maximumOffset)
+-    }
+-
+-    private static func rounded(_ offset: TimeInterval) -> TimeInterval {
+-        return (offset / step).rounded() * step
+-    }
+-
+-    @objc private func sliderMoved() {
+-        titleLabel.text = agoDescription(offsetForSlider())
+-    }
+-
+-    @objc private func sliderReleased() {
+-        setOffset(offsetForSlider(), notify: true)
+-        updateTitle(window: nil)
+-    }
+-
+-    @objc private func returnToNow() {
+-        setOffset(0, notify: true)
+-        updateTitle(window: nil)
+-    }
+-}
+diff --git a/LoopKit/LoopKitUI/View Controllers/ChartsManager.swift b/LoopKit/LoopKitUI/View Controllers/ChartsManager.swift
+index eda1ffa..8198c74 100644
+--- a/LoopKit/LoopKitUI/View Controllers/ChartsManager.swift	
++++ b/LoopKit/LoopKitUI/View Controllers/ChartsManager.swift	
+@@ -58,6 +58,21 @@ open class ChartsManager {
+         return chartSettings.leading + chartSettings.trailing + labelsWidthY + chartSettings.labelsToAxisSpacingY
+     }
+ 
++    /// Width of the y-axis label area to the left of the plot.
++    public var labelAreaWidth: CGFloat {
++        return chartSettings.leading + labelsWidthY + chartSettings.labelsToAxisSpacingY
++    }
++
++    /// Spacing of the time labels. Wider spacing keeps labels apart when zoomed out.
++    /// For an exact time axis, start and end dates should fall on multiples of it.
++    public var xAxisStep: TimeInterval = .hours(1) {
++        didSet {
++            if xAxisStep != oldValue {
++                xAxisValues = nil
++            }
++        }
++    }
++
+     private let axisLabelSettings: ChartLabelSettings
+ 
+     private let guideLinesLayerSettings: ChartGuideLinesLayerSettings
+@@ -181,12 +196,12 @@ open class ChartsManager {
+             )
+         ]
+ 
+-        let segments = ceil(endDate.timeIntervalSince(startDate).hours)
++        let segments = ceil(endDate.timeIntervalSince(startDate) / xAxisStep)
+ 
+         let xAxisValues = ChartAxisValuesStaticGenerator.generateXAxisValuesWithChartPoints(points,
+             minSegmentCount: segments - 1,
+             maxSegmentCount: segments + 1,
+-            multiple: TimeInterval(hours: 1),
++            multiple: xAxisStep,
+             axisValueGenerator: {
+                 ChartAxisValueDate(
+                     date: ChartAxisValueDate.dateFromScalar($0),
+diff --git a/LoopKit/LoopKitUI/Views/ChartContainerView.swift b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+index 436f7b7..fd5efce 100644
+--- a/LoopKit/LoopKitUI/Views/ChartContainerView.swift
++++ b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+@@ -10,28 +10,54 @@ import UIKit
+ 
+ public class ChartContainerView: UIView {
+ 
++    /// Display only. When set, the chart is drawn wider than this view (covering more
++    /// time than is visible) and slid so the visible time range shows. The chart's
++    /// y-axis labels are kept pinned on the left. Nil draws the chart to fit, as before.
++    public var viewport: ChartViewport? {
++        didSet {
++            if viewport != oldValue {
++                clipsToBounds = viewport != nil
++                setNeedsLayout()
++            }
++        }
++    }
++
++    /// The frame the current chart was generated for.
++    private var generatedFrame: CGRect?
++
++    /// A pinned copy of the chart's y-axis labels, used while the chart's own are slid off to the left.
++    private let axisLabelStrip = UIImageView()
++
+     override public func layoutSubviews() {
+         super.layoutSubviews()
+ 
+-        if chartView == nil || chartView!.frame != bounds {
++        let frame = chartFrame()
++        if chartView == nil || generatedFrame != frame {
+             // 50 is the smallest height in which we should attempt to redraw a chart.
+             // Smaller sizes might be requested mid-animation, so ignore them.
+             if bounds.height > 50 {
+-                chartView = chartGenerator?(bounds)
++                generatedFrame = frame
++                chartView = chartGenerator?(frame)
++                if chartView == nil {
++                    generatedFrame = nil
++                }
+             }
+         } else if chartView!.superview == nil {
+             addSubview(chartView!)
++            updateAxisLabelStrip()
+         }
+     }
+ 
+     public func reloadChart() {
+         chartView = nil
++        generatedFrame = nil
+         setNeedsLayout()
+     }
+ 
+     public var chartGenerator: ((CGRect) -> UIView?)? {
+         didSet {
+             chartView = nil
++            generatedFrame = nil
+             setNeedsLayout()
+         }
+     }
+@@ -43,9 +69,83 @@ public class ChartContainerView: UIView {
+             }
+ 
+             if let view = chartView {
++                view.transform = .identity
+                 self.addSubview(view)
+             }
++
++            updateAxisLabelStrip()
++        }
++    }
++
++    /// Slides and stretches the drawn chart during a gesture. `anchorX` is in this view's coordinates.
++    public func applyGestureTransform(translationX: CGFloat, scaleX: CGFloat, anchorX: CGFloat) {
++        guard let chartView = chartView else {
++            return
++        }
++        // UIView transforms act around the view's center; adjust so the stretch acts around the anchor.
++        let centerX = chartView.center.x
++        let offsetX = (1 - scaleX) * (anchorX - centerX) + translationX
++        chartView.transform = CGAffineTransform(a: scaleX, b: 0, c: 0, d: 1, tx: offsetX, ty: 0)
++    }
++
++    private func chartFrame() -> CGRect {
++        guard let viewport = viewport, bounds.width > viewport.fixedHorizontalMargin else {
++            return bounds
+         }
++        let visiblePlotWidth = bounds.width - viewport.fixedHorizontalMargin
++        let renderPlotWidth = (visiblePlotWidth * max(1, viewport.renderWidthScale)).rounded()
++        return CGRect(
++            x: (-renderPlotWidth * viewport.leadingFraction).rounded(),
++            y: 0,
++            width: renderPlotWidth + viewport.fixedHorizontalMargin,
++            height: bounds.height
++        )
+     }
+ 
++    private func updateAxisLabelStrip() {
++        axisLabelStrip.removeFromSuperview()
++        axisLabelStrip.image = nil
++
++        guard let viewport = viewport, viewport.leadingFraction > 0, let chartView = chartView else {
++            return
++        }
++
++        // Copy the chart's own label area once it has drawn, and pin it over the left edge.
++        let width = viewport.labelAreaWidth
++        DispatchQueue.main.async { [weak self, weak chartView] in
++            guard let self = self, let chartView = chartView, chartView === self.chartView, chartView.window != nil else {
++                return
++            }
++            let size = CGSize(width: width, height: chartView.bounds.height)
++            guard size.width > 0, size.height > 0 else {
++                return
++            }
++            let background = self.opaqueBackgroundColor
++            let savedTransform = chartView.transform
++            chartView.transform = .identity
++            let image = UIGraphicsImageRenderer(size: size).image { context in
++                background.setFill()
++                context.fill(CGRect(origin: .zero, size: size))
++                chartView.drawHierarchy(in: chartView.bounds, afterScreenUpdates: true)
++            }
++            chartView.transform = savedTransform
++
++            self.axisLabelStrip.image = image
++            self.axisLabelStrip.frame = CGRect(origin: .zero, size: size)
++            self.axisLabelStrip.isUserInteractionEnabled = false
++            self.addSubview(self.axisLabelStrip)
++        }
++    }
++
++    /// The first solid background color behind this view, for the pinned label strip.
++    private var opaqueBackgroundColor: UIColor {
++        var view: UIView? = self
++        while let current = view {
++            if let color = current.backgroundColor, color.cgColor.alpha > 0.99 {
++                return color
++            }
++            view = current.superview
++        }
++        return .systemBackground
++    }
+ }
+diff --git a/LoopKit/LoopKitUI/Views/ChartTableViewCell.swift b/LoopKit/LoopKitUI/Views/ChartTableViewCell.swift
+index 6576fbb..7610c3b 100644
+--- a/LoopKit/LoopKitUI/Views/ChartTableViewCell.swift
++++ b/LoopKit/LoopKitUI/Views/ChartTableViewCell.swift
+@@ -38,6 +38,17 @@ public final class ChartTableViewCell: UITableViewCell {
+     public func reloadChart() {
+         chartContentView.reloadChart()
+     }
++
++    /// The view the chart is drawn in.
++    public var chartContainer: ChartContainerView {
++        return chartContentView
++    }
++
++    /// Display only. Draws the chart wider than the cell and slides it to the visible time range.
++    public var chartViewport: ChartViewport? {
++        get { chartContentView.viewport }
++        set { chartContentView.viewport = newValue }
++    }
+     
+     public func setChartGenerator(generator: ((CGRect) -> UIView?)?) {
+         chartContentView.chartGenerator = generator
