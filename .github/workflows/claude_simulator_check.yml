@@ -129,20 +129,11 @@ jobs:
           shot charts-light-60-hours-back -ClaudeChartPreviewHoursBack 60
           shot charts-light-24-hour-zoom -ClaudeChartPreviewZoomHours 24
           shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
+          shot meal-breakdown -ClaudeMealPreview
+          shot meal-breakdown-confirm -ClaudeMealPreview -ClaudeMealPreviewConfirm
           xcrun simctl ui "${UDID}" appearance dark || true
           shot charts-dark
           xcrun simctl ui "${UDID}" appearance light || true
-
-          # Crash check: re-run the build 6 button setup, then report whether the app survived.
-          xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" >/dev/null 2>&1 || true
-          xcrun simctl launch "${UDID}" "${BUNDLE_ID}" -ClaudeChartPreview -ClaudeChartPreviewHoursBack 60 -ClaudeOldButtonConstraintTest || true
-          sleep 15
-          if xcrun simctl spawn "${UDID}" launchctl list | grep -q "${BUNDLE_ID}"; then
-            echo "CLAUDE-CRASH-CHECK old-button-setup: app still running"
-          else
-            echo "CLAUDE-CRASH-CHECK old-button-setup: app is NOT running (crashed)"
-          fi
-          xcrun simctl io "${UDID}" screenshot build/screenshots/old-button-test.png || true
 
           # Any crash reports from this run, printed into the log.
           for report in $(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 3); do
@@ -160,7 +151,7 @@ jobs:
           # Small JPEG copies, text-encoded between markers, so they can be read from the log.
           shopt -s nullglob
           # Printed slowly in small chunks, because a fast burst can be dropped from the log.
-          for png in build/screenshots/*.png; do
+          for png in build/screenshots/meal-*.png build/screenshots/charts-light-mid-drag.png; do
             name=$(basename "${png}" .png)
             sips -Z 900 -s format jpeg -s formatOptions 45 "${png}" --out "build/${name}.jpg" >/dev/null
             base64 -b 100 -i "build/${name}.jpg" > "build/${name}.b64"
