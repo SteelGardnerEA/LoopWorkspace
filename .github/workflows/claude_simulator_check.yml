@@ -131,6 +131,26 @@ jobs:
           shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
           xcrun simctl ui "${UDID}" appearance dark || true
           shot charts-dark
+          xcrun simctl ui "${UDID}" appearance light || true
+
+          # Crash check: re-run the build 6 button setup, then report whether the app survived.
+          xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" >/dev/null 2>&1 || true
+          xcrun simctl launch "${UDID}" "${BUNDLE_ID}" -ClaudeChartPreview -ClaudeChartPreviewHoursBack 60 -ClaudeOldButtonConstraintTest || true
+          sleep 15
+          if xcrun simctl spawn "${UDID}" launchctl list | grep -q "${BUNDLE_ID}"; then
+            echo "CLAUDE-CRASH-CHECK old-button-setup: app still running"
+          else
+            echo "CLAUDE-CRASH-CHECK old-button-setup: app is NOT running (crashed)"
+          fi
+          xcrun simctl io "${UDID}" screenshot build/screenshots/old-button-test.png || true
+
+          # Any crash reports from this run, printed into the log.
+          for report in $(ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -n 3); do
+            echo "CLAUDE-CRASH-REPORT ${report}"
+            head -c 6000 "${report}"
+            echo ""
+            echo "CLAUDE-CRASH-REPORT-END"
+          done
 
       - name: Print screenshots into the log
         if: always()

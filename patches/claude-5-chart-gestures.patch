@@ -1,8 +1,29 @@
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index 930c353..5dd8a42 100644
+index 930c353..3f2fdf2 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
-@@ -128,24 +128,37 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+@@ -51,7 +51,19 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
+         if Self.isChartPreview {
+-            window?.rootViewController = ChartPreviewViewController()
++            // Inside a navigation controller with a bottom toolbar, like the real main screen.
++            let preview = ChartPreviewViewController()
++            preview.toolbarItems = [
++                UIBarButtonItem(systemItem: .flexibleSpace),
++                UIBarButtonItem(image: UIImage(systemName: "fork.knife"), style: .plain, target: nil, action: nil),
++                UIBarButtonItem(systemItem: .flexibleSpace),
++                UIBarButtonItem(image: UIImage(systemName: "gearshape"), style: .plain, target: nil, action: nil),
++                UIBarButtonItem(systemItem: .flexibleSpace)
++            ]
++            let navigationController = UINavigationController(rootViewController: preview)
++            navigationController.setNavigationBarHidden(true, animated: false)
++            navigationController.setToolbarHidden(false, animated: false)
++            window?.rootViewController = navigationController
+             window?.makeKeyAndVisible()
+             return
+         }
+@@ -128,24 +140,37 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
  
  #if DEBUG
  /// Debug-only screen for simulator screenshots. Shows the main-screen charts with
@@ -51,12 +72,25 @@ index 930c353..5dd8a42 100644
      }
  
      override func viewDidLoad() {
-@@ -154,6 +167,18 @@ final class ChartPreviewViewController: UIViewController {
+@@ -154,6 +179,31 @@ final class ChartPreviewViewController: UIViewController {
          loadSampleData()
      }
  
 +    override func viewDidAppear(_ animated: Bool) {
 +        super.viewDidAppear(animated)
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeOldButtonConstraintTest"),
++           let navigationView = navigationController?.view,
++           let toolbar = navigationController?.toolbar {
++            // Re-runs the build 6 button setup exactly, to check whether it is what crashed.
++            let button = UIButton(configuration: .filled())
++            button.translatesAutoresizingMaskIntoConstraints = false
++            navigationView.addSubview(button)
++            NSLayoutConstraint.activate([
++                button.centerXAnchor.constraint(equalTo: navigationView.centerXAnchor),
++                button.bottomAnchor.constraint(equalTo: toolbar.topAnchor, constant: -12)
++            ])
++            NSLog("ClaudeOldButtonConstraintTest: constraints activated without crashing")
++        }
 +        if let drag = argument("-ClaudeChartPreviewDragPoints") {
 +            // Freeze a drag partway, the way the charts look under a finger.
 +            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -70,7 +104,7 @@ index 930c353..5dd8a42 100644
      override func viewDidLayoutSubviews() {
          super.viewDidLayoutSubviews()
          placedViews.forEach { $0.removeFromSuperview() }
-@@ -176,8 +201,20 @@ final class ChartPreviewViewController: UIViewController {
+@@ -176,8 +226,20 @@ final class ChartPreviewViewController: UIViewController {
              ("Insulin (delivery bars and active insulin, same scale)", .dose, 120),
              ("Active Carbohydrates", .cob, 90)
          ]
@@ -92,7 +126,7 @@ index 930c353..5dd8a42 100644
              let title = UILabel(frame: CGRect(x: area.minX, y: y, width: area.width, height: 20))
              title.font = .preferredFont(forTextStyle: .subheadline)
              title.adjustsFontSizeToFitWidth = true
-@@ -186,38 +223,43 @@ final class ChartPreviewViewController: UIViewController {
+@@ -186,38 +248,43 @@ final class ChartPreviewViewController: UIViewController {
              placedViews.append(title)
              y += 20
  
@@ -123,10 +157,10 @@ index 930c353..5dd8a42 100644
 +            formatter.dateTemplate = "EEEMMMdjmm"
 +            configuration.subtitle = formatter.string(from: window.start(now: now), to: window.end(now: now))
 +            nowButton.configuration = configuration
-+            nowButton.sizeToFit()
-+            nowButton.center = CGPoint(x: view.bounds.midX, y: min(y + 30, view.bounds.maxY - 60))
-+            view.addSubview(nowButton)
-+            placedViews.append(nowButton)
++            if let navigationController = navigationController {
++                // Same placement code as the real main screen.
++                FloatingChartButtonPlacement.place(nowButton, in: navigationController)
++            }
 +        }
      }
  
@@ -159,7 +193,7 @@ index 930c353..5dd8a42 100644
          let fiveMinutes = TimeInterval.minutes(5)
          func times(from: Date, through: Date) -> [Date] {
 diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
-index 616a220..c3101c7 100644
+index 616a220..e729dd8 100644
 --- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
 +++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
 @@ -146,15 +146,14 @@ final class StatusTableViewController: LoopChartsTableViewController {
@@ -181,27 +215,28 @@ index 616a220..c3101c7 100644
              }
              .store(in: &cancellables)
      }
-@@ -210,6 +209,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -210,6 +209,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
          onscreen = true
  
-+        installChartNowButtonIfNeeded()
 +        updateChartNowButton()
 +
          deviceManager.analyticsServicesManager.didDisplayStatusScreen()
  
          deviceManager.checkDeliveryUncertaintyState()
-@@ -220,6 +222,9 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -220,6 +221,11 @@ final class StatusTableViewController: LoopChartsTableViewController {
  
          onscreen = false
  
 +        chartGestures.cancel()
-+        chartNowButton.isHidden = true
++        if chartNowButton.superview != nil {
++            chartNowButton.isHidden = true
++        }
 +
          if presentedViewController == nil {
              navigationController?.setNavigationBarHidden(false, animated: animated)
          }
-@@ -401,61 +406,195 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -401,61 +407,184 @@ final class StatusTableViewController: LoopChartsTableViewController {
      
      private lazy var statusCharts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
  
@@ -234,7 +269,6 @@ index 616a220..c3101c7 100644
 +        configuration.imagePadding = 6
 +        configuration.titleAlignment = .center
 +        let button = UIButton(configuration: configuration)
-+        button.translatesAutoresizingMaskIntoConstraints = false
 +        button.isHidden = true
 +        button.accessibilityLabel = NSLocalizedString("Back to now", comment: "Accessibility label for the button that returns the charts to the current time")
 +        button.addAction(UIAction { [weak self] _ in
@@ -352,20 +386,6 @@ index 616a220..c3101c7 100644
 +        updateChartNowButton()
 +    }
 +
-+    private func installChartNowButtonIfNeeded() {
-+        guard chartNowButton.superview == nil, let navigationView = navigationController?.view else {
-+            return
-+        }
-+        navigationView.addSubview(chartNowButton)
-+        var constraints = [chartNowButton.centerXAnchor.constraint(equalTo: navigationView.centerXAnchor)]
-+        if let toolbar = navigationController?.toolbar {
-+            constraints.append(chartNowButton.bottomAnchor.constraint(equalTo: toolbar.topAnchor, constant: -12))
-+        } else {
-+            constraints.append(chartNowButton.bottomAnchor.constraint(equalTo: navigationView.safeAreaLayoutGuide.bottomAnchor, constant: -12))
-+        }
-+        NSLayoutConstraint.activate(constraints)
-+    }
-+
 +    private func updateChartNowButton() {
 +        let window = chartGestures.window
 +        guard onscreen, !window.isLive else {
@@ -378,6 +398,10 @@ index 616a220..c3101c7 100644
 +        configuration.subtitle = chartRangeFormatter.string(from: window.start(now: now), to: window.end(now: now))
 +        chartNowButton.configuration = configuration
 +        chartNowButton.isHidden = false
++        // Added only once it is needed, and placed by frame (no layout rules tied to the toolbar).
++        if let navigationController = navigationController {
++            FloatingChartButtonPlacement.place(chartNowButton, in: navigationController)
++        }
 +    }
 +
      override func createChartsManager() -> ChartsManager {
@@ -429,7 +453,7 @@ index 616a220..c3101c7 100644
      }
  
      override func reloadData(animated: Bool = false) {
-@@ -507,7 +646,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -507,7 +636,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
          var carbsOnBoard: HKQuantity?
          let startDate = charts.startDate
          // When scrolled back, only fetch the visible window so nothing is drawn past its right edge.
@@ -438,7 +462,7 @@ index 616a220..c3101c7 100644
          let basalDeliveryState = self.basalDeliveryState
          let automaticDosingEnabled = automaticDosingStatus.automaticDosingEnabled
  
-@@ -934,6 +1073,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -934,6 +1063,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
      }
  
      private func redrawCharts() {
@@ -451,7 +475,7 @@ index 616a220..c3101c7 100644
          tableView.beginUpdates()
          charts.prerender()
          for case let cell as ChartTableViewCell in tableView.visibleCells {
-@@ -1102,6 +1247,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -1102,6 +1237,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
              return cell
          case .charts:
              let cell = tableView.dequeueReusableCell(withIdentifier: ChartTableViewCell.className, for: indexPath) as! ChartTableViewCell
@@ -459,7 +483,7 @@ index 616a220..c3101c7 100644
  
              switch ChartRow(rawValue: indexPath.row)! {
              case .glucose:
-@@ -1381,16 +1527,25 @@ final class StatusTableViewController: LoopChartsTableViewController {
+@@ -1381,16 +1517,25 @@ final class StatusTableViewController: LoopChartsTableViewController {
                  }
              }
          case .charts:
@@ -536,10 +560,10 @@ index c43169d..25573ab 100644
  				1452F4B22A8521CD00F8B9E4 /* TextFieldRow.swift in Sources */,
 diff --git a/LoopKit/LoopKitUI/Charts/ChartGestures.swift b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
 new file mode 100644
-index 0000000..414fa09
+index 0000000..b85e669
 --- /dev/null
 +++ b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,479 @@
 +//
 +//  ChartGestures.swift
 +//  LoopKitUI
@@ -984,6 +1008,41 @@ index 0000000..414fa09
 +        onSettle?()
 +    }
 +}
++
++
++/// Places a floating button above a navigation controller's bottom toolbar using frames only.
++/// No Auto Layout ties to the toolbar, which may not share a view hierarchy with it on newer iOS.
++public enum FloatingChartButtonPlacement {
++    public static func place(_ button: UIButton, in navigationController: UINavigationController) {
++        guard let container = navigationController.view else {
++            return
++        }
++        if button.superview !== container {
++            button.removeFromSuperview()
++            button.translatesAutoresizingMaskIntoConstraints = true
++            container.addSubview(button)
++        }
++        container.bringSubviewToFront(button)
++
++        let size = button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
++        var bottom = container.bounds.maxY - container.safeAreaInsets.bottom - 12
++        if !navigationController.isToolbarHidden {
++            let toolbar = navigationController.toolbar
++            if let toolbar = toolbar, toolbar.window != nil, toolbar.window === container.window {
++                let toolbarFrame = toolbar.convert(toolbar.bounds, to: container)
++                bottom = min(bottom, toolbarFrame.minY - 12)
++            } else {
++                bottom -= 64
++            }
++        }
++        button.frame = CGRect(
++            x: ((container.bounds.width - size.width) / 2).rounded(),
++            y: (bottom - size.height).rounded(),
++            width: size.width,
++            height: size.height
++        )
++    }
++}
 diff --git a/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift b/LoopKit/LoopKitUI/Charts/ChartHistoryScrubberView.swift
 deleted file mode 100644
 index 1f8aaa4..0000000
@@ -1229,7 +1288,7 @@ index eda1ffa..8198c74 100644
                  ChartAxisValueDate(
                      date: ChartAxisValueDate.dateFromScalar($0),
 diff --git a/LoopKit/LoopKitUI/Views/ChartContainerView.swift b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
-index 436f7b7..fd5efce 100644
+index 436f7b7..1254aa7 100644
 --- a/LoopKit/LoopKitUI/Views/ChartContainerView.swift
 +++ b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
 @@ -10,28 +10,54 @@ import UIKit
@@ -1350,7 +1409,7 @@ index 436f7b7..fd5efce 100644
 +            let image = UIGraphicsImageRenderer(size: size).image { context in
 +                background.setFill()
 +                context.fill(CGRect(origin: .zero, size: size))
-+                chartView.drawHierarchy(in: chartView.bounds, afterScreenUpdates: true)
++                chartView.drawHierarchy(in: chartView.bounds, afterScreenUpdates: false)
 +            }
 +            chartView.transform = savedTransform
 +
