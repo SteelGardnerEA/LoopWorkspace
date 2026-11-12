@@ -31,7 +31,7 @@ index bf6ba92..66efdd1 100644
 +    }
 +}
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index f4508e6..0c8e24e 100644
+index 23a799a..930c353 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
 @@ -166,7 +166,7 @@ final class ChartPreviewViewController: UIViewController {

@@ -1,5 +1,5 @@
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index 6d00858..f4508e6 100644
+index 6d00858..23a799a 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
 @@ -127,13 +127,27 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
@@ -33,6 +33,15 @@ index 6d00858..f4508e6 100644
      override func viewDidLoad() {
          super.viewDidLoad()
          view.backgroundColor = .systemBackground
+@@ -159,7 +173,7 @@ final class ChartPreviewViewController: UIViewController {
+ 
+         let rows: [(String, StatusChartsManager.ChartIndex, CGFloat)] = [
+             ("Glucose", .glucose, 190),
+-            ("Insulin (delivery bars, active insulin shaded, right-edge scale)", .dose, 120),
++            ("Insulin (delivery bars and active insulin, same scale)", .dose, 120),
+             ("Active Carbohydrates", .cob, 90)
+         ]
+         charts.prerender()
 @@ -180,19 +194,38 @@ final class ChartPreviewViewController: UIViewController {
              }
              y += row.2 + 10
