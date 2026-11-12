@@ -127,6 +127,8 @@ jobs:
           xcrun simctl ui "${UDID}" appearance light || true
           shot charts-light
           shot charts-light-60-hours-back -ClaudeChartPreviewHoursBack 60
+          shot charts-light-24-hour-zoom -ClaudeChartPreviewZoomHours 24
+          shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
           xcrun simctl ui "${UDID}" appearance dark || true
           shot charts-dark
 
