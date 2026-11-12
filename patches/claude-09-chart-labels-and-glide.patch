@@ -1,0 +1,174 @@
+diff --git a/LoopKit/LoopKitUI/Charts/ChartGestures.swift b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+index be7b7d0..e6ab86a 100644
+--- a/LoopKit/LoopKitUI/Charts/ChartGestures.swift
++++ b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+@@ -190,6 +190,8 @@ public final class ChartGestureController: NSObject, UIGestureRecognizerDelegate
+ 
+     // Live gesture state, in points of the visible plot.
+     private var translation: CGFloat = 0
++    /// Where a drag started from: a new drag that catches a glide continues from where the glide was.
++    private var panStartTranslation: CGFloat = 0
+     private var scale: CGFloat = 1
+     private var anchorX: CGFloat = 0
+     private var displayLink: CADisplayLink?
+@@ -278,15 +280,17 @@ public final class ChartGestureController: NSObject, UIGestureRecognizerDelegate
+         }
+         switch recognizer.state {
+         case .began:
++            // Catching a glide picks the charts up where they are, instead of snapping them back.
++            panStartTranslation = displayLink != nil ? translation : 0
+             stopGlide()
+             scale = 1
+-            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            translation = clampedTranslation(panStartTranslation + recognizer.translation(in: tableView).x)
+             applyTransforms()
+         case .changed:
+-            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            translation = clampedTranslation(panStartTranslation + recognizer.translation(in: tableView).x)
+             applyTransforms()
+         case .ended:
+-            translation = clampedTranslation(recognizer.translation(in: tableView).x)
++            translation = clampedTranslation(panStartTranslation + recognizer.translation(in: tableView).x)
+             applyTransforms()
+             let flick = recognizer.velocity(in: tableView).x
+             if abs(flick) > 250 {
+@@ -369,7 +373,11 @@ public final class ChartGestureController: NSObject, UIGestureRecognizerDelegate
+         }
+         switch recognizer.state {
+         case .began:
+-            stopGlide()
++            if displayLink != nil {
++                // Settle a glide where it is first, so the pinch starts from what is on screen.
++                stopGlide()
++                commit()
++            }
+             translation = 0
+             if window.isLive, let viewport = container.viewport {
+                 // Following now: zoom around "now" so it stays put, matching what the commit does.
+diff --git a/LoopKit/LoopKitUI/Views/ChartContainerView.swift b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+index 1254aa7..6ccf208 100644
+--- a/LoopKit/LoopKitUI/Views/ChartContainerView.swift
++++ b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+@@ -103,47 +103,81 @@ public class ChartContainerView: UIView {
+     }
+ 
+     private func updateAxisLabelStrip() {
+-        axisLabelStrip.removeFromSuperview()
+-        axisLabelStrip.image = nil
+-
+         guard let viewport = viewport, viewport.leadingFraction > 0, let chartView = chartView else {
++            axisLabelStrip.removeFromSuperview()
++            axisLabelStrip.image = nil
+             return
+         }
+ 
+-        // Copy the chart's own label area once it has drawn, and pin it over the left edge.
+-        let width = viewport.labelAreaWidth
++        // Copy the chart's own label area and pin it over the left edge. Render the layers
++        // directly: a screen snapshot comes out blank because the labels sit off screen.
++        renderAxisLabelStrip(from: chartView, width: viewport.labelAreaWidth)
++        // Once more after the chart has finished its first layout and drawing pass.
+         DispatchQueue.main.async { [weak self, weak chartView] in
+-            guard let self = self, let chartView = chartView, chartView === self.chartView, chartView.window != nil else {
+-                return
+-            }
+-            let size = CGSize(width: width, height: chartView.bounds.height)
+-            guard size.width > 0, size.height > 0 else {
++            guard let self = self, let chartView = chartView, chartView === self.chartView,
++                  let viewport = self.viewport, viewport.leadingFraction > 0 else {
+                 return
+             }
+-            let background = self.opaqueBackgroundColor
+-            let savedTransform = chartView.transform
+-            chartView.transform = .identity
+-            let image = UIGraphicsImageRenderer(size: size).image { context in
+-                background.setFill()
+-                context.fill(CGRect(origin: .zero, size: size))
+-                chartView.drawHierarchy(in: chartView.bounds, afterScreenUpdates: false)
+-            }
+-            chartView.transform = savedTransform
++            self.renderAxisLabelStrip(from: chartView, width: viewport.labelAreaWidth)
++        }
++    }
+ 
+-            self.axisLabelStrip.image = image
+-            self.axisLabelStrip.frame = CGRect(origin: .zero, size: size)
+-            self.axisLabelStrip.isUserInteractionEnabled = false
+-            self.addSubview(self.axisLabelStrip)
++    private func renderAxisLabelStrip(from chartView: UIView, width: CGFloat) {
++        let size = CGSize(width: width, height: chartView.bounds.height)
++        guard size.width > 0, size.height > 0 else {
++            return
+         }
++        chartView.layoutIfNeeded()
++        Self.displayIfNeeded(chartView.layer)
++
++        let background = opaqueBackgroundColor
++        let format = UIGraphicsImageRendererFormat(for: traitCollection)
++        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
++            background.setFill()
++            context.fill(CGRect(origin: .zero, size: size))
++            // Draws in the chart's own coordinates, so its transform during a gesture doesn't matter.
++            chartView.layer.render(in: context.cgContext)
++        }
++
++        axisLabelStrip.image = image
++        axisLabelStrip.frame = CGRect(origin: .zero, size: size)
++        axisLabelStrip.isUserInteractionEnabled = false
++        if axisLabelStrip.superview !== self {
++            addSubview(axisLabelStrip)
++        }
++        bringSubviewToFront(axisLabelStrip)
++    }
++
++    /// Makes sure every layer has drawn its content before it is copied.
++    private static func displayIfNeeded(_ layer: CALayer) {
++        layer.displayIfNeeded()
++        layer.sublayers?.forEach { displayIfNeeded($0) }
+     }
+ 
+-    /// The first solid background color behind this view, for the pinned label strip.
++    /// The background behind the chart, for the pinned label strip: the cell's own color,
++    /// not the table's gray showing between cells.
+     private var opaqueBackgroundColor: UIColor {
+         var view: UIView? = self
+         while let current = view {
+             if let color = current.backgroundColor, color.cgColor.alpha > 0.99 {
+                 return color
+             }
++            if let cell = current as? UITableViewCell {
++                if let color = cell.backgroundConfiguration?.backgroundColor, color.cgColor.alpha > 0.99 {
++                    return color
++                }
++                if let color = cell.backgroundView?.backgroundColor, color.cgColor.alpha > 0.99 {
++                    return color
++                }
++                var parent = cell.superview
++                while let candidate = parent, !(candidate is UITableView) {
++                    parent = candidate.superview
++                }
++                if let tableView = parent as? UITableView, tableView.style != .plain {
++                    return .secondarySystemGroupedBackground
++                }
++                return .systemBackground
++            }
+             view = current.superview
+         }
+         return .systemBackground
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index c7d67af..5991bbb 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -497,9 +497,11 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         applyChartWindow(window, now: Date())
+ 
+         // Redraw right away with the data already loaded, then load data for the new range.
++        // Always regenerate: a pan can keep the same drawn size, and the old drawing would
++        // otherwise snap back to where it was until new data arrived.
+         charts.prerender()
+         for cell in visibleChartCells {
+-            cell.chartContainer.setNeedsLayout()
++            cell.chartContainer.reloadChart()
+             cell.chartContainer.layoutIfNeeded()
+         }
+         refreshContext.formUnion(RefreshContext.all)

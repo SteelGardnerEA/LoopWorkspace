@@ -1,0 +1,274 @@
+diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+index 80ab931..06e4b0a 100644
+--- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+@@ -68,6 +68,33 @@ public class PredictedGlucoseChart: GlucoseChart, ChartProviding {
+     /// behind the glucose dots. Lines are clipped to the chart and do not change its scale.
+     public var pastPredictions: [[GlucoseValue]] = []
+ 
++    /// Display only: whether all past predictions show as a faint cloud. When off, they are
++    /// still loaded so press-and-hold can show the one made at the touched time.
++    public var showsPastPredictionsCloud = true
++
++    private weak var pastPredictionsView: PastPredictionsView?
++
++    /// Display only. While pressing and holding, hides the cloud and shows just the prediction
++    /// made at the touched time. Nil puts the chart back as it was.
++    public func focusPastPrediction(with recognizer: UIGestureRecognizer?) {
++        guard let view = pastPredictionsView, view.window != nil else {
++            return
++        }
++        if let recognizer = recognizer {
++            view.focus(atX: recognizer.location(in: view).x)
++        } else {
++            view.focusedIndex = nil
++        }
++    }
++
++    /// The same, for a point in another view's coordinates.
++    public func focusPastPrediction(at point: CGPoint, in otherView: UIView) {
++        guard let view = pastPredictionsView, view.window != nil else {
++            return
++        }
++        view.focus(atX: otherView.convert(point, to: view).x)
++    }
++
+     private var predictedGlucoseSoftBounds: PredictedGlucoseBounds?
+     
+     private let yAxisStepSizeMGDLOverride: Double?
+@@ -219,9 +246,14 @@ extension PredictedGlucoseChart {
+             }
+         }
+ 
++        let pastPredictionsLayer = PastPredictionsLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, lines: pastPredictionLines, color: colors.glucoseTint, showsCloud: showsPastPredictionsCloud)
++        pastPredictionsLayer?.onViewCreated = { [weak self] view in
++            self?.pastPredictionsView = view
++        }
++
+         let layers: [ChartLayer?] = [
+             // Before the background layer: both insert at the bottom, so the background ends up beneath these lines.
+-            PastPredictionsLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, lines: pastPredictionLines, color: colors.glucoseTint),
++            pastPredictionsLayer,
+             LoopStatusBackgroundLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, periods: loopStatusPeriods),
+             gridLayer,
+             targetsLayer,
+@@ -374,17 +406,23 @@ final class PastPredictionsLayer: ChartCoordsSpaceLayer {
+     /// Each line is a list of (time scalar, glucose value) points.
+     private let lines: [[CGPoint]]
+     private let color: UIColor
++    private let showsCloud: Bool
++
++    var onViewCreated: ((PastPredictionsView) -> Void)?
+ 
+     static let lineAlpha: CGFloat = 0.07
+     static let lineWidth: CGFloat = 1
++    static let focusedLineAlpha: CGFloat = 0.9
++    static let focusedLineWidth: CGFloat = 2
+ 
+-    init?(xAxis: ChartAxis, yAxis: ChartAxis, lines: [[CGPoint]], color: UIColor) {
++    init?(xAxis: ChartAxis, yAxis: ChartAxis, lines: [[CGPoint]], color: UIColor, showsCloud: Bool) {
+         let drawable = lines.filter { $0.count > 1 }
+         guard !drawable.isEmpty else {
+             return nil
+         }
+         self.lines = drawable
+         self.color = color
++        self.showsCloud = showsCloud
+         super.init(xAxis: xAxis, yAxis: yAxis)
+     }
+ 
+@@ -394,10 +432,12 @@ final class PastPredictionsLayer: ChartCoordsSpaceLayer {
+         let axisStart = min(xAxis.first, xAxis.last)
+         let axisEnd = max(xAxis.first, xAxis.last)
+ 
++        var startXs: [CGFloat] = []
+         let paths: [CGPath] = lines.compactMap { line in
+             guard let first = line.first, let last = line.last, last.x >= axisStart, first.x <= axisEnd else {
+                 return nil
+             }
++            startXs.append(modelLocToContainerScreenLoc(x: Double(first.x)))
+             let path = CGMutablePath()
+             for (index, point) in line.enumerated() {
+                 let screenPoint = CGPoint(
+@@ -417,18 +457,44 @@ final class PastPredictionsLayer: ChartCoordsSpaceLayer {
+             return
+         }
+ 
+-        let view = PastPredictionsView(frame: chart.containerView.bounds, paths: paths, color: color)
++        let view = PastPredictionsView(frame: chart.containerView.bounds, paths: paths, startXs: startXs, color: color, showsCloud: showsCloud)
+         chart.containerView.insertSubview(view, at: 0)
++        onViewCreated?(view)
+     }
+ }
+ 
+ final class PastPredictionsView: UIView {
+     private let paths: [CGPath]
++    /// Where each prediction starts (the time Loop made it), in this view's coordinates.
++    private let startXs: [CGFloat]
+     private let color: UIColor
++    private let showsCloud: Bool
+ 
+-    init(frame: CGRect, paths: [CGPath], color: UIColor) {
++    /// The one prediction shown while pressing and holding; nil shows the normal cloud.
++    var focusedIndex: Int? {
++        didSet {
++            if focusedIndex != oldValue {
++                setNeedsDisplay()
++            }
++        }
++    }
++
++    /// Focuses the latest prediction made at or before this x position.
++    func focus(atX x: CGFloat) {
++        var best: Int?
++        for (index, startX) in startXs.enumerated() where startX <= x + 0.5 {
++            if best == nil || startX >= startXs[best!] {
++                best = index
++            }
++        }
++        focusedIndex = best
++    }
++
++    init(frame: CGRect, paths: [CGPath], startXs: [CGFloat], color: UIColor, showsCloud: Bool) {
+         self.paths = paths
++        self.startXs = startXs
+         self.color = color
++        self.showsCloud = showsCloud
+         super.init(frame: frame)
+         backgroundColor = .clear
+         isUserInteractionEnabled = false
+@@ -444,8 +510,22 @@ final class PastPredictionsView: UIView {
+             return
+         }
+         context.clip(to: bounds)
+-        context.setLineWidth(PastPredictionsLayer.lineWidth)
+         context.setLineJoin(.round)
++
++        if let index = focusedIndex, paths.indices.contains(index) {
++            // Just the prediction made at the touched time.
++            context.setLineWidth(PastPredictionsLayer.focusedLineWidth)
++            context.setLineCap(.round)
++            context.setStrokeColor(color.withAlphaComponent(PastPredictionsLayer.focusedLineAlpha).cgColor)
++            context.addPath(paths[index])
++            context.strokePath()
++            return
++        }
++
++        guard showsCloud else {
++            return
++        }
++        context.setLineWidth(PastPredictionsLayer.lineWidth)
+         context.setStrokeColor(color.withAlphaComponent(PastPredictionsLayer.lineAlpha).cgColor)
+         // One stroke per line, so overlapping lines add up into a darker band.
+         for path in paths {
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 9ff332b..7373e02 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -6,6 +6,7 @@
+ //
+ 
+ import Foundation
++import UIKit
+ import HealthKit
+ import LoopKit
+ import LoopUI
+@@ -166,6 +167,20 @@ extension StatusChartsManager {
+         glucose.pastPredictions = predictions
+         invalidateChart(atIndex: ChartIndex.glucose.rawValue)
+     }
++
++    /// Display only. Whether the faint cloud of past predictions shows (the checkbox).
++    func setShowsPastPredictionsCloud(_ shows: Bool) {
++        guard glucose.showsPastPredictionsCloud != shows else {
++            return
++        }
++        glucose.showsPastPredictionsCloud = shows
++        invalidateChart(atIndex: ChartIndex.glucose.rawValue)
++    }
++
++    /// Display only. While pressing and holding, show just the prediction made at that time.
++    func focusPastPrediction(with recognizer: UIGestureRecognizer?) {
++        glucose.focusPastPrediction(with: recognizer)
++    }
+ }
+ 
+ 
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 00ba88a..206e168 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -159,6 +159,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ /// - `-ClaudeChartPreviewHoursBack 60`: scrolled back 60 hours
+ /// - `-ClaudeChartPreviewZoomHours 24`: 24 hours on screen
+ /// - `-ClaudeChartPreviewDragPoints 120`: frozen mid-drag, 120 points to the right
++/// - `-ClaudeChartPreviewHoldX 200`: frozen press-and-hold at x = 200 on the glucose chart
+ final class ChartPreviewViewController: UIViewController {
+     private lazy var charts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
+     private var placedViews: [UIView] = []
+@@ -199,6 +200,12 @@ final class ChartPreviewViewController: UIViewController {
+                 }
+             }
+         }
++        if let holdX = argument("-ClaudeChartPreviewHoldX"), let glucose = containers.first {
++            // Freeze a press-and-hold: just the prediction made at that time.
++            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
++                self.charts.glucose.focusPastPrediction(at: CGPoint(x: holdX, y: glucose.bounds.midY), in: glucose)
++            }
++        }
+     }
+ 
+     override func viewDidLayoutSubviews() {
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 5991bbb..eeb9b44 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -447,6 +447,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private func configureChartGestures() {
+         chartGestures.inspectRecognizer = charts.gestureRecognizer
++        charts.gestureRecognizer?.addTarget(self, action: #selector(inspectGestureChanged(_:)))
+         chartGestures.chartContainers = { [weak self] in
+             self?.visibleChartCells.map { $0.chartContainer } ?? []
+         }
+@@ -484,6 +485,16 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         chartGestures.install(on: tableView)
+     }
+ 
++    /// Press and hold: the glucose chart shows just the prediction Loop made at the touched time.
++    @objc private func inspectGestureChanged(_ recognizer: UIGestureRecognizer) {
++        switch recognizer.state {
++        case .began, .changed:
++            statusCharts.focusPastPrediction(with: recognizer)
++        default:
++            statusCharts.focusPastPrediction(with: nil)
++        }
++    }
++
+     private var visibleChartCells: [ChartTableViewCell] {
+         return tableView.visibleCells.compactMap { $0 as? ChartTableViewCell }
+     }
+@@ -728,7 +739,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         var pastPredictions: [[GlucoseValue]]?
+         let showsPastPredictions = UserDefaults.standard.showsPastGlucosePredictions
+         reloadGroup.enter()
+-        fetchChartHistory(start: startDate, end: historyEndDate, includePastPredictions: showsPastPredictions) { history in
++        // Always loaded: press-and-hold shows one past prediction even with the cloud turned off.
++        fetchChartHistory(start: startDate, end: historyEndDate, includePastPredictions: true) { history in
+             loopStatusPeriods = history?.periods
+             pastPredictions = history?.pastPredictions
+             reloadGroup.leave()
+@@ -836,11 +848,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+ 
+             // Past predictions
+-            if !showsPastPredictions {
+-                charts.setPastPredictions([])
+-            } else if let pastPredictions = pastPredictions {
++            if let pastPredictions = pastPredictions {
+                 charts.setPastPredictions(pastPredictions)
+             }
++            charts.setShowsPastPredictionsCloud(showsPastPredictions)
+             self.appliedShowsPastPredictions = showsPastPredictions
+ 
+             // Active Insulin
