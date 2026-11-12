@@ -1,0 +1,83 @@
+diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+index 06e4b0a..bbde5ce 100644
+--- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+@@ -72,27 +72,31 @@ public class PredictedGlucoseChart: GlucoseChart, ChartProviding {
+     /// still loaded so press-and-hold can show the one made at the touched time.
+     public var showsPastPredictionsCloud = true
+ 
+-    private weak var pastPredictionsView: PastPredictionsView?
++    /// Every drawn copy of the past predictions (the charts are drawn more than once, at more
++    /// than one width, e.g. when scrolled back). Only the ones on screen are focused.
++    private let pastPredictionsViews = NSHashTable<PastPredictionsView>.weakObjects()
++
++    private var onScreenPastPredictionsViews: [PastPredictionsView] {
++        return pastPredictionsViews.allObjects.filter { $0.window != nil }
++    }
+ 
+     /// Display only. While pressing and holding, hides the cloud and shows just the prediction
+     /// made at the touched time. Nil puts the chart back as it was.
+     public func focusPastPrediction(with recognizer: UIGestureRecognizer?) {
+-        guard let view = pastPredictionsView, view.window != nil else {
+-            return
+-        }
+-        if let recognizer = recognizer {
+-            view.focus(atX: recognizer.location(in: view).x)
+-        } else {
+-            view.focusedIndex = nil
++        for view in pastPredictionsViews.allObjects {
++            if let recognizer = recognizer, view.window != nil {
++                view.focus(atX: recognizer.location(in: view).x)
++            } else {
++                view.focusedIndex = nil
++            }
+         }
+     }
+ 
+     /// The same, for a point in another view's coordinates.
+     public func focusPastPrediction(at point: CGPoint, in otherView: UIView) {
+-        guard let view = pastPredictionsView, view.window != nil else {
+-            return
++        for view in onScreenPastPredictionsViews {
++            view.focus(atX: otherView.convert(point, to: view).x)
+         }
+-        view.focus(atX: otherView.convert(point, to: view).x)
+     }
+ 
+     private var predictedGlucoseSoftBounds: PredictedGlucoseBounds?
+@@ -248,7 +252,7 @@ extension PredictedGlucoseChart {
+ 
+         let pastPredictionsLayer = PastPredictionsLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, lines: pastPredictionLines, color: colors.glucoseTint, showsCloud: showsPastPredictionsCloud)
+         pastPredictionsLayer?.onViewCreated = { [weak self] view in
+-            self?.pastPredictionsView = view
++            self?.pastPredictionsViews.add(view)
+         }
+ 
+         let layers: [ChartLayer?] = [
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 7589049..65f857a 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -815,13 +815,20 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             if let glucoseSamples = glucoseSamples {
+                 self.statusCharts.setGlucoseValues(glucoseSamples)
+             }
+-            if historyEndDate == nil, (automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled), let predictedGlucoseValues = predictedGlucoseValues {
++            // The current forecast stays on while scrolled back. "Eventually" uses the whole
++            // forecast; the drawn line stops at the drawn range's right edge.
++            var eventualPoint: ChartAxisValue?
++            if (automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled), let predictedGlucoseValues = predictedGlucoseValues {
+                 self.statusCharts.setPredictedGlucoseValues(predictedGlucoseValues)
++                eventualPoint = self.statusCharts.glucose.predictedGlucosePoints.last?.y
++                if let historyEndDate = historyEndDate {
++                    self.statusCharts.setPredictedGlucoseValues(predictedGlucoseValues.filter { $0.startDate <= historyEndDate })
++                }
+             } else {
+                 self.statusCharts.setPredictedGlucoseValues([])
+             }
+             if !FeatureFlags.predictedGlucoseChartClampEnabled,
+-                let lastPoint = self.statusCharts.glucose.predictedGlucosePoints.last?.y
++                let lastPoint = eventualPoint
+             {
+                 self.eventualGlucoseDescription = String(describing: lastPoint)
+             } else {
