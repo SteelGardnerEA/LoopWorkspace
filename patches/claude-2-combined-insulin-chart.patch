@@ -133,7 +133,7 @@ index 995ec7c..5460f8d 100644
              case .cob:
                  performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
 diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
-index ff5238a..6bfb117 100644
+index ff5238a..644d16a 100644
 --- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
 +++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
 @@ -51,6 +51,10 @@ public class DoseChart: ChartProviding {
@@ -147,16 +147,21 @@ index ff5238a..6bfb117 100644
      private var doseChartCache: ChartPointsTouchHighlightLayerViewCache?
  }
  
-@@ -68,8 +72,15 @@ public extension DoseChart {
+@@ -68,8 +72,20 @@ public extension DoseChart {
          
          let points = generateDosePoints(startDate: startDate)
  
 +        // Active insulin on the delivery chart's own scale, so 2 U of active insulin sits at
 +        // the same height as a 2 U bolus or a 2 U/hour rate.
 +        let doseFormatter = NumberFormatter.dose
-+        let activeInsulinScaledPoints: [ChartPoint] = activeInsulinPoints.map {
-+            ChartPoint(x: $0.x, y: ChartAxisValueDoubleLog(actualDouble: $0.y.scalar, unitString: "U", formatter: doseFormatter))
-+        }
++        // Only the visible time range, so the line never runs past the chart's edges.
++        let visibleStart = xAxisValues.first?.scalar ?? -Double.infinity
++        let visibleEnd = xAxisValues.last?.scalar ?? Double.infinity
++        let activeInsulinScaledPoints: [ChartPoint] = activeInsulinPoints
++            .filter { $0.x.scalar >= visibleStart && $0.x.scalar <= visibleEnd }
++            .map {
++                ChartPoint(x: $0.x, y: ChartAxisValueDoubleLog(actualDouble: $0.y.scalar, unitString: "U", formatter: doseFormatter))
++            }
 +
          let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
 -            chartPoints: points.basal + points.bolus + doseDisplayRangePoints,
@@ -164,7 +169,7 @@ index ff5238a..6bfb117 100644
              minSegmentCount: 2,
              maxSegmentCount: 3,
              multiple: log(2) / 2,
-@@ -106,6 +117,22 @@ public extension DoseChart {
+@@ -106,6 +122,22 @@ public extension DoseChart {
              bolusLayer = nil
          }
  
@@ -187,7 +192,7 @@ index ff5238a..6bfb117 100644
          // Grid lines
          let gridLayer = ChartGuideLinesForValuesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, settings: guideLinesLayerSettings, axisValuesX: Array(xAxisValues.dropFirst().dropLast()), axisValuesY: yAxisValues)
  
-@@ -138,6 +165,8 @@ public extension DoseChart {
+@@ -138,6 +170,8 @@ public extension DoseChart {
              yAxisLayer,
              zeroGuidelineLayer,
              doseChartCache?.highlightLayer,
