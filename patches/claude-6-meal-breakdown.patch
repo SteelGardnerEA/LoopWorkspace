@@ -1,0 +1,605 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 3f2fdf2..00ba88a 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -10,6 +10,8 @@ import LoopKit
+ #if DEBUG
+ import HealthKit
+ import LoopKitUI
++import LoopCore
++import SwiftUI
+ #endif
+ 
+ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+@@ -20,7 +22,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+     /// True only when the simulator check launches a debug build with `-ClaudeChartPreview`.
+     static var isChartPreview: Bool {
+         #if DEBUG
+-        return ProcessInfo.processInfo.arguments.contains("-ClaudeChartPreview")
++        let arguments = ProcessInfo.processInfo.arguments
++        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview")
+         #else
+         return false
+         #endif
+@@ -50,6 +53,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         #if DEBUG
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreview") {
++            // The carb entry screen's Meal Breakdown tab, filled in with an example meal.
++            window?.rootViewController = MealBreakdownPreview.makeViewController()
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         if Self.isChartPreview {
+             // Inside a navigation controller with a bottom toolbar, like the real main screen.
+             let preview = ChartPreviewViewController()
+@@ -181,19 +191,6 @@ final class ChartPreviewViewController: UIViewController {
+ 
+     override func viewDidAppear(_ animated: Bool) {
+         super.viewDidAppear(animated)
+-        if ProcessInfo.processInfo.arguments.contains("-ClaudeOldButtonConstraintTest"),
+-           let navigationView = navigationController?.view,
+-           let toolbar = navigationController?.toolbar {
+-            // Re-runs the build 6 button setup exactly, to check whether it is what crashed.
+-            let button = UIButton(configuration: .filled())
+-            button.translatesAutoresizingMaskIntoConstraints = false
+-            navigationView.addSubview(button)
+-            NSLayoutConstraint.activate([
+-                button.centerXAnchor.constraint(equalTo: navigationView.centerXAnchor),
+-                button.bottomAnchor.constraint(equalTo: toolbar.topAnchor, constant: -12)
+-            ])
+-            NSLog("ClaudeOldButtonConstraintTest: constraints activated without crashing")
+-        }
+         if let drag = argument("-ClaudeChartPreviewDragPoints") {
+             // Freeze a drag partway, the way the charts look under a finger.
+             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+@@ -379,4 +376,85 @@ final class ChartPreviewViewController: UIViewController {
+         charts.setPastPredictions(pastPredictions)
+     }
+ }
++
++/// Debug-only: the carb entry screen with a stand-in for Loop's data, for screenshots.
++/// Saving does nothing here (the stand-in refuses carb entries).
++enum MealBreakdownPreview {
++    static func makeViewController() -> UIViewController {
++        let delegate = PreviewCarbEntryDelegate()
++        let viewModel = CarbEntryViewModel(delegate: delegate)
++        viewModel.entryMode = .mealBreakdown
++        // Steel's example: Costa Vida sweet pork burrito.
++        viewModel.mealCarbs = 115
++        viewModel.mealSugars = 17
++        viewModel.mealFiber = 6
++        viewModel.mealProtein = 44
++        viewModel.mealFat = 36
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewConfirm") {
++            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
++                viewModel.continueToBolus()
++            }
++        }
++        let view = CarbEntryView(viewModel: viewModel)
++            .environmentObject(delegate.displayGlucosePreference)
++        let controller = UIHostingController(rootView: view)
++        // Keep the stand-in alive as long as the screen.
++        objc_setAssociatedObject(controller, &delegateKey, delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
++        return controller
++    }
++
++    private static var delegateKey: UInt8 = 0
++}
++
++private struct PreviewOnlyError: Error {}
++
++/// Debug-only stand-in for Loop's data, enough to show the carb entry screen.
++final class PreviewCarbEntryDelegate: CarbEntryViewModelDelegate {
++    let analyticsServicesManager = AnalyticsServicesManager()
++    let defaultAbsorptionTimes: CarbStore.DefaultAbsorptionTimes = LoopCoreConstants.defaultCarbAbsorptionTimes
++    let displayGlucosePreference = DisplayGlucosePreference(displayGlucoseUnit: .milligramsPerDeciliter)
++    let settings = LoopSettings()
++    let mostRecentGlucoseDataDate: Date? = nil
++    let mostRecentPumpDataDate: Date? = nil
++    let isPumpConfigured = false
++    let pumpInsulinType: InsulinType? = nil
++
++    func withLoopState(do block: @escaping (LoopState) -> Void) {}
++
++    func saveGlucose(sample: NewGlucoseSample) async -> StoredGlucoseSample? {
++        return nil
++    }
++
++    func addCarbEntry(_ carbEntry: NewCarbEntry, replacing replacingEntry: StoredCarbEntry?, completion: @escaping (_ result: Result<StoredCarbEntry>) -> Void) {
++        completion(.failure(PreviewOnlyError()))
++    }
++
++    func storeManualBolusDosingDecision(_ bolusDosingDecision: BolusDosingDecision, withDate date: Date) {}
++
++    func enactBolus(units: Double, activationType: BolusActivationType, completion: @escaping (_ error: Error?) -> Void) {
++        completion(PreviewOnlyError())
++    }
++
++    func getGlucoseSamples(start: Date?, end: Date?, completion: @escaping (_ samples: Swift.Result<[StoredGlucoseSample], Error>) -> Void) {
++        completion(.success([]))
++    }
++
++    func insulinOnBoard(at date: Date, completion: @escaping (_ result: DoseStoreResult<InsulinValue>) -> Void) {
++        completion(.failure(.configurationError))
++    }
++
++    func carbsOnBoard(at date: Date, effectVelocities: [GlucoseEffectVelocity]?, completion: @escaping (_ result: CarbStoreResult<CarbValue>) -> Void) {
++        completion(.failure(.notConfigured))
++    }
++
++    func insulinActivityDuration(for type: InsulinType?) -> TimeInterval {
++        return .hours(6)
++    }
++
++    func roundBolusVolume(units: Double) -> Double {
++        return units
++    }
++
++    func updateRemoteRecommendation() {}
++}
+ #endif
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index 37dedee..eecec71 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -24,6 +24,8 @@ final class CarbEntryViewModel: ObservableObject {
+         
+         case maxQuantityExceded
+         case warningQuantityValidation
++        case confirmMealBreakdown
++        case mealBreakdownSaveFailed
+     }
+     
+     enum Warning: Identifiable {
+@@ -148,17 +150,141 @@ final class CarbEntryViewModel: ObservableObject {
+     }
+     
+     var continueButtonDisabled: Bool {
+-        get { updatedCarbEntry == nil }
++        get {
++            if entryMode == .mealBreakdown {
++                return !mealBreakdownIsValid
++            }
++            return updatedCarbEntry == nil
++        }
+     }
+     
+     // MARK: - Continue to Bolus and Carb Quantity Warnings
+     func continueToBolus() {
++        if entryMode == .mealBreakdown {
++            guard mealBreakdownIsValid else {
++                return
++            }
++            alert = .confirmMealBreakdown
++            return
++        }
++
+         guard updatedCarbEntry != nil else {
+             return
+         }
+         
+         validateInputAndContinue()
+     }
++
++    // MARK: - Meal breakdown
++    // Splits a meal into separate carb entries with Steel's formula. It only creates ordinary
++    // carb entries (the same as entering them one by one); Loop's dosing math is unchanged.
++
++    enum EntryMode: Hashable {
++        case standard
++        case mealBreakdown
++    }
++
++    @Published var entryMode: EntryMode = .standard
++    @Published var mealCarbs: Double? = nil
++    @Published var mealSugars: Double? = nil
++    @Published var mealFiber: Double? = nil
++    @Published var mealProtein: Double? = nil
++    @Published var mealFat: Double? = nil
++
++    var mealBreakdown: MealBreakdown {
++        return MealBreakdown(
++            carbs: mealCarbs ?? 0,
++            sugars: mealSugars ?? 0,
++            fiber: mealFiber ?? 0,
++            protein: mealProtein ?? 0,
++            fat: mealFat ?? 0
++        )
++    }
++
++    func mealParts(now: Date = Date()) -> [MealBreakdown.Part] {
++        return mealBreakdown.parts(
++            now: now,
++            fastAbsorption: defaultAbsorptionTimes.fast,
++            mediumAbsorption: defaultAbsorptionTimes.medium,
++            minimumAbsorption: minAbsorptionTime,
++            maximumAbsorption: maxAbsorptionTime
++        )
++    }
++
++    var mealBreakdownIsValid: Bool {
++        let parts = mealParts()
++        let maximum = maxCarbEntryQuantity.doubleValue(for: .gram())
++        return !parts.isEmpty && parts.allSatisfy { $0.grams <= maximum }
++    }
++
++    /// The confirmation message listing each entry that will be saved.
++    var mealConfirmationText: String {
++        let timeFormatter = DateFormatter()
++        timeFormatter.dateStyle = .none
++        timeFormatter.timeStyle = .short
++        let now = Date()
++        let lines = mealParts(now: now).map { part -> String in
++            let grams = NumberFormatter.localizedString(from: NSNumber(value: part.grams), number: .none)
++            let when = part.start > now.addingTimeInterval(.minutes(1))
++                ? String(format: NSLocalizedString("starting %@", comment: "Meal breakdown: when a delayed carb entry starts (1: time)"), timeFormatter.string(from: part.start))
++                : NSLocalizedString("now", comment: "Meal breakdown: carb entry starts now")
++            return "\(part.emoji) \(grams) g \(when), over \(MealBreakdown.durationText(part.absorptionTime))"
++        }
++        let footer = NSLocalizedString("They are saved now. Loop then shows its bolus recommendation.", comment: "Meal breakdown confirmation footer")
++        return (lines + ["", footer]).joined(separator: "\n")
++    }
++
++    func saveMealBreakdownAndContinue() {
++        alert = nil
++        let now = Date()
++        let parts = mealParts(now: now)
++        guard !parts.isEmpty, let delegate = delegate else {
++            return
++        }
++
++        Task { @MainActor in
++            for part in parts {
++                let entry = NewCarbEntry(
++                    date: now,
++                    quantity: HKQuantity(unit: .gram(), doubleValue: part.grams),
++                    startDate: part.start,
++                    foodType: part.emoji,
++                    absorptionTime: part.absorptionTime
++                )
++                let saved: Bool = await withCheckedContinuation { continuation in
++                    delegate.addCarbEntry(entry, replacing: nil) { result in
++                        switch result {
++                        case .success:
++                            continuation.resume(returning: true)
++                        case .failure:
++                            continuation.resume(returning: false)
++                        }
++                    }
++                }
++                guard saved else {
++                    self.alert = .mealBreakdownSaveFailed
++                    return
++                }
++            }
++            self.setPlainBolusViewModel()
++        }
++    }
++
++    /// The normal bolus screen, with no carb entry of its own: the meal's entries are already saved.
++    @MainActor private func setPlainBolusViewModel() {
++        let viewModel = BolusEntryViewModel(
++            delegate: delegate,
++            screenWidth: UIScreen.main.bounds.width
++        )
++        Task {
++            await viewModel.generateRecommendationAndStartObserving()
++        }
++
++        viewModel.analyticsServicesManager = delegate?.analyticsServicesManager
++        bolusViewModel = viewModel
++
++        delegate?.analyticsServicesManager.didDisplayBolusScreen()
++    }
+     
+     private func validateInputAndContinue() {
+         guard absorptionTime <= maxAbsorptionTime else {
+@@ -316,3 +442,99 @@ final class CarbEntryViewModel: ObservableObject {
+             .store(in: &cancellables)
+     }
+ }
++
++
++/// Steel's meal split. Display and carb entry only; Loop's dosing math is unchanged.
++///
++/// - Starches = carbs − sugars − fiber
++/// - Now 🍭: the sugars
++/// - Medium 🌮 (3 hours): 60% of starches
++/// - Delayed 🍕: 40% of starches + 50% of protein, absorbed from 3 hours after the meal
++///   until the delay, where delay = (protein × 4 min + fat × 8 min).
++///   If the delay is 3 hours or less there is no later window, so this part joins 🌮.
++struct MealBreakdown: Equatable {
++    var carbs: Double
++    var sugars: Double
++    var fiber: Double
++    var protein: Double
++    var fat: Double
++
++    static let delayedStart: TimeInterval = .hours(3)
++
++    var starches: Double {
++        return max(0, carbs - max(0, sugars) - max(0, fiber))
++    }
++
++    var fastGrams: Double {
++        return min(max(0, sugars), max(0, carbs))
++    }
++
++    var mediumGrams: Double {
++        return 0.6 * starches
++    }
++
++    var delayedGrams: Double {
++        return 0.4 * starches + 0.5 * max(0, protein)
++    }
++
++    var delay: TimeInterval {
++        return .minutes(max(0, protein) * 4 + max(0, fat) * 8)
++    }
++
++    var hasDelayedPart: Bool {
++        return delay > Self.delayedStart
++    }
++
++    var totalGrams: Double {
++        return fastGrams + mediumGrams + delayedGrams
++    }
++
++    struct Part: Equatable {
++        let emoji: String
++        let grams: Double
++        let start: Date
++        let absorptionTime: TimeInterval
++    }
++
++    /// The carb entries to save, in whole grams. Parts under 1 gram are left out.
++    func parts(now: Date, fastAbsorption: TimeInterval, mediumAbsorption: TimeInterval, minimumAbsorption: TimeInterval, maximumAbsorption: TimeInterval) -> [Part] {
++        var parts: [Part] = []
++
++        let fast = fastGrams.rounded()
++        if fast >= 1 {
++            parts.append(Part(emoji: "🍭", grams: fast, start: now, absorptionTime: fastAbsorption))
++        }
++
++        if hasDelayedPart {
++            let medium = mediumGrams.rounded()
++            if medium >= 1 {
++                parts.append(Part(emoji: "🌮", grams: medium, start: now, absorptionTime: mediumAbsorption))
++            }
++            let delayed = delayedGrams.rounded()
++            if delayed >= 1 {
++                let duration = min(max(delay - Self.delayedStart, minimumAbsorption), maximumAbsorption)
++                parts.append(Part(emoji: "🍕", grams: delayed, start: now.addingTimeInterval(Self.delayedStart), absorptionTime: duration))
++            }
++        } else {
++            let medium = (mediumGrams + delayedGrams).rounded()
++            if medium >= 1 {
++                parts.append(Part(emoji: "🌮", grams: medium, start: now, absorptionTime: mediumAbsorption))
++            }
++        }
++
++        return parts
++    }
++
++    /// "30 min", "3 h", or "4.7 h".
++    static func durationText(_ interval: TimeInterval) -> String {
++        let minutes = interval / 60
++        if minutes < 60 {
++            return String(format: NSLocalizedString("%d min", comment: "Duration in minutes (1: minutes)"), Int(minutes.rounded()))
++        }
++        let hours = interval / 3600
++        if abs(hours - hours.rounded()) < 0.05 {
++            return String(format: NSLocalizedString("%d h", comment: "Duration in whole hours (1: hours)"), Int(hours.rounded()))
++        }
++        return String(format: NSLocalizedString("%.1f h", comment: "Duration in hours with one decimal (1: hours)"), hours)
++    }
++}
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index 5831836..3fc200b 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -66,14 +66,25 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+                 .edgesIgnoringSafeArea(.all)
+             
+             ScrollView {
++                if isNewEntry {
++                    entryModePicker
++                }
++
+                 warningsCard
+ 
+-                mainCard
+-                    .padding(.top, 8)
++                if viewModel.entryMode == .mealBreakdown {
++                    mealInputCard
++                        .padding(.top, 8)
++                    mealResultCard
++                        .padding(.top, 8)
++                } else {
++                    mainCard
++                        .padding(.top, 8)
++                }
+                 
+                 continueActionButton
+                 
+-                if isNewEntry, FeatureFlags.allowExperimentalFeatures {
++                if isNewEntry, FeatureFlags.allowExperimentalFeatures, viewModel.entryMode == .standard {
+                     favoriteFoodsCard
+                 }
+                 
+@@ -192,6 +203,24 @@ extension CarbEntryView {
+                 message: Text(message),
+                 dismissButton: .cancel(Text(okMessage), action: viewModel.clearAlert)
+             )
++        case .confirmMealBreakdown:
++            let count = viewModel.mealParts().count
++            let title = count == 1
++                ? NSLocalizedString("Add Carb Entry?", comment: "Meal breakdown confirmation title for one entry")
++                : String(format: NSLocalizedString("Add %d Carb Entries?", comment: "Meal breakdown confirmation title (1: number of entries)"), count)
++            return SwiftUI.Alert(
++                title: Text(title),
++                message: Text(viewModel.mealConfirmationText),
++                primaryButton: .default(Text("Add Entries", comment: "Meal breakdown confirmation button"), action: viewModel.saveMealBreakdownAndContinue),
++                secondaryButton: .cancel(Text("Cancel", comment: "Button label for cancel"), action: viewModel.clearAlert)
++            )
++        case .mealBreakdownSaveFailed:
++            let okMessage = NSLocalizedString("com.loudnate.LoopKit.errorAlertActionTitle", value: "OK", comment: "The title of the action used to dismiss an error alert")
++            return SwiftUI.Alert(
++                title: Text("Couldn't Save All Entries", comment: "Meal breakdown save failure title"),
++                message: Text("Some of the meal's carb entries may not have been saved. Check the carb entries list before bolusing.", comment: "Meal breakdown save failure message"),
++                dismissButton: .cancel(Text(okMessage), action: viewModel.clearAlert)
++            )
+         case .warningQuantityValidation:
+             let message = String(
+                 format: NSLocalizedString("Did you intend to enter %1$@ grams as the amount of carbohydrates for this meal?", comment: "Alert body when entered carbohydrates is greater than threshold (1: entered quantity in grams)"),
+@@ -207,6 +236,147 @@ extension CarbEntryView {
+     }
+ }
+ 
++// MARK: - Meal Breakdown
++extension CarbEntryView {
++    private var entryModePicker: some View {
++        Picker(selection: $viewModel.entryMode, label: Text("Entry type", comment: "Label for the carb entry type picker")) {
++            Text("Standard", comment: "Carb entry type: one entry").tag(CarbEntryViewModel.EntryMode.standard)
++            Text("Meal Breakdown", comment: "Carb entry type: split a meal into several entries").tag(CarbEntryViewModel.EntryMode.mealBreakdown)
++        }
++        .pickerStyle(.segmented)
++        .padding(.horizontal)
++        .padding(.top, 8)
++    }
++
++    private var mealInputCard: some View {
++        VStack(spacing: 10) {
++            mealInputRow(NSLocalizedString("Carbs", comment: "Meal breakdown input: total carbohydrates"), value: $viewModel.mealCarbs)
++            CardSectionDivider()
++            mealInputRow(NSLocalizedString("Sugars", comment: "Meal breakdown input: sugars"), value: $viewModel.mealSugars)
++            CardSectionDivider()
++            mealInputRow(NSLocalizedString("Fiber", comment: "Meal breakdown input: fiber"), value: $viewModel.mealFiber)
++            CardSectionDivider()
++            mealInputRow(NSLocalizedString("Protein", comment: "Meal breakdown input: protein"), value: $viewModel.mealProtein)
++            CardSectionDivider()
++            mealInputRow(NSLocalizedString("Fat", comment: "Meal breakdown input: fat"), value: $viewModel.mealFat)
++        }
++        .padding(.vertical, 12)
++        .padding(.horizontal)
++        .background(CardBackground())
++        .padding(.horizontal)
++    }
++
++    private func mealInputRow(_ title: String, value: Binding<Double?>) -> some View {
++        HStack {
++            Text(title)
++            Spacer()
++            TextField("0", value: value, format: .number)
++                .keyboardType(.decimalPad)
++                .multilineTextAlignment(.trailing)
++                .frame(maxWidth: 100)
++            Text("g", comment: "Grams unit")
++                .foregroundColor(.secondary)
++        }
++    }
++
++    private var mealResultCard: some View {
++        let breakdown = viewModel.mealBreakdown
++        let now = Date()
++        let parts = viewModel.mealParts(now: now)
++        let timeFormatter: DateFormatter = {
++            let formatter = DateFormatter()
++            formatter.dateStyle = .none
++            formatter.timeStyle = .short
++            return formatter
++        }()
++        func grams(_ value: Double) -> String {
++            return NumberFormatter.localizedString(from: NSNumber(value: value.rounded()), number: .none) + " g"
++        }
++
++        return VStack(alignment: .leading, spacing: 10) {
++            Text("BREAKDOWN", comment: "Meal breakdown result section title")
++                .font(.footnote)
++                .foregroundColor(.secondary)
++
++            HStack {
++                Text("Starches", comment: "Meal breakdown: starches row")
++                Spacer()
++                Text("\(grams(breakdown.carbs)) − \(grams(breakdown.sugars)) − \(grams(breakdown.fiber)) = \(grams(breakdown.starches))")
++                    .foregroundColor(.secondary)
++                    .minimumScaleFactor(0.7)
++                    .lineLimit(1)
++            }
++
++            CardSectionDivider()
++
++            if parts.isEmpty {
++                Text("Enter the meal's carbs to see the breakdown.", comment: "Meal breakdown placeholder")
++                    .foregroundColor(.secondary)
++            }
++
++            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
++                HStack(alignment: .firstTextBaseline) {
++                    Text(part.emoji)
++                    VStack(alignment: .leading, spacing: 2) {
++                        Text(mealPartTitle(part.emoji))
++                        Text(mealPartTiming(part, now: now, timeFormatter: timeFormatter))
++                            .font(.caption)
++                            .foregroundColor(.secondary)
++                    }
++                    Spacer()
++                    Text(grams(part.grams))
++                        .bold()
++                }
++            }
++
++            if !parts.isEmpty {
++                CardSectionDivider()
++                HStack {
++                    Text("Total", comment: "Meal breakdown total row")
++                    Spacer()
++                    Text(grams(parts.reduce(0) { $0 + $1.grams }))
++                        .bold()
++                }
++                Text(mealDelayNote(breakdown))
++                    .font(.caption)
++                    .foregroundColor(.secondary)
++                    .fixedSize(horizontal: false, vertical: true)
++            }
++        }
++        .padding(.vertical, 12)
++        .padding(.horizontal)
++        .background(CardBackground())
++        .padding(.horizontal)
++    }
++
++    private func mealPartTitle(_ emoji: String) -> String {
++        switch emoji {
++        case "🍭":
++            return NSLocalizedString("Now (sugars)", comment: "Meal breakdown: fast part")
++        case "🍕":
++            return NSLocalizedString("Delayed (starches and protein)", comment: "Meal breakdown: delayed part")
++        default:
++            return NSLocalizedString("Medium (starches)", comment: "Meal breakdown: medium part")
++        }
++    }
++
++    private func mealPartTiming(_ part: MealBreakdown.Part, now: Date, timeFormatter: DateFormatter) -> String {
++        let duration = MealBreakdown.durationText(part.absorptionTime)
++        if part.start > now.addingTimeInterval(.minutes(1)) {
++            return String(format: NSLocalizedString("Starts %1$@, over %2$@", comment: "Meal breakdown timing for a delayed entry (1: start time, 2: duration)"), timeFormatter.string(from: part.start), duration)
++        }
++        return String(format: NSLocalizedString("Now, over %@", comment: "Meal breakdown timing for an entry starting now (1: duration)"), duration)
++    }
++
++    private func mealDelayNote(_ breakdown: MealBreakdown) -> String {
++        let delay = MealBreakdown.durationText(breakdown.delay)
++        if breakdown.hasDelayedPart {
++            return String(format: NSLocalizedString("Delay %@ from protein and fat, so the delayed part runs from 3 h after the meal to the end of the delay. Saved as separate carb entries; Loop's dosing math is unchanged.", comment: "Meal breakdown note with a delayed part (1: delay)"), delay)
++        }
++        return String(format: NSLocalizedString("Delay %@ is 3 h or less, so the delayed part is included in the medium entry. Saved as separate carb entries; Loop's dosing math is unchanged.", comment: "Meal breakdown note without a delayed part (1: delay)"), delay)
++    }
++}
++
+ // MARK: - Favorite Foods Card
+ extension CarbEntryView {
+     private var favoriteFoodsCard: some View {
