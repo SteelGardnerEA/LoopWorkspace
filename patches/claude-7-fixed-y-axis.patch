@@ -1,0 +1,208 @@
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 66efdd1..9ff332b 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -6,6 +6,7 @@
+ //
+ 
+ import Foundation
++import HealthKit
+ import LoopKit
+ import LoopUI
+ import LoopKitUI
+@@ -181,3 +182,45 @@ extension UserDefaults {
+         }
+     }
+ }
++
++
++extension StatusChartsManager {
++    /// Display only. Holds the insulin and carb charts' vertical scales steady while browsing.
++    func setHoldsYAxisRanges(_ holds: Bool) {
++        dose.yAxisRangeHolder.isHolding = holds
++        cob.yAxisRangeHolder.isHolding = holds
++    }
++
++    /// Display only. Sets the glucose chart's vertical scale, redrawing only if it changed.
++    func setGlucoseDisplayRange(_ range: ClosedRange<HKQuantity>) {
++        guard range != glucose.glucoseDisplayRange else {
++            return
++        }
++        glucose.glucoseDisplayRange = range
++        invalidateChart(atIndex: ChartIndex.glucose.rawValue)
++    }
++
++    /// Trio-style glucose scale from the last 7 days of readings, so the chart doesn't
++    /// rescale as it scrolls: the top steps through 200, 250, 300, 350, and 400 mg/dL,
++    /// and the bottom sits just below the 7-day low. Never narrower than `defaultRange`.
++    static func glucoseScale(forWeek week: ClosedRange<Double>, defaultRange: ClosedRange<HKQuantity>) -> ClosedRange<HKQuantity> {
++        let defaultLower = defaultRange.lowerBound.doubleValue(for: .milligramsPerDeciliter)
++        let defaultUpper = defaultRange.upperBound.doubleValue(for: .milligramsPerDeciliter)
++
++        let top: Double
++        if week.upperBound <= 200 {
++            top = 200
++        } else if week.upperBound <= 225 {
++            top = 250
++        } else if week.upperBound <= 275 {
++            top = 300
++        } else if week.upperBound <= 325 {
++            top = 350
++        } else {
++            top = 400
++        }
++
++        let bottom = max(39, (min(week.lowerBound, defaultLower, 70) / 10).rounded(.down) * 10)
++        return HKQuantity(unit: .milligramsPerDeciliter, doubleValue: bottom)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: max(top, defaultUpper))
++    }
++}
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index e729dd8..c7d67af 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -525,6 +525,8 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         if charts.startDate != range.start || charts.maxEndDate != range.end {
+             refreshContext.formUnion(RefreshContext.all)
+         }
++        // While browsing back in time, the insulin and carb scales hold steady.
++        statusCharts.setHoldsYAxisRanges(!window.isLive)
+         charts.xAxisStep = window.axisStep
+         charts.startDate = range.start
+         charts.maxEndDate = range.end
+@@ -704,6 +706,21 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+         }
+ 
++        // 7 days of glucose sets a fixed glucose scale, so scrolling doesn't rescale it (display only)
++        var weekGlucoseRange: ClosedRange<Double>?
++        if currentContext.contains(.glucose) {
++            reloadGroup.enter()
++            deviceManager.glucoseStore.getGlucoseSamples(start: Date(timeIntervalSinceNow: -TimeInterval.days(7)), end: nil) { result in
++                if case .success(let samples) = result {
++                    let values = samples.map { $0.quantity.doubleValue(for: .milligramsPerDeciliter) }
++                    if let lowest = values.min(), let highest = values.max() {
++                        weekGlucoseRange = lowest...highest
++                    }
++                }
++                reloadGroup.leave()
++            }
++        }
++
+         // Loop status background and past predictions (display only)
+         var loopStatusPeriods: [LoopStatusPeriod]?
+         var pastPredictions: [[GlucoseValue]]?
+@@ -805,6 +822,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+             let charts = self.statusCharts
+ 
++            // Fixed glucose scale
++            if let weekGlucoseRange = weekGlucoseRange {
++                let defaultRange = FeatureFlags.predictedGlucoseChartClampEnabled ? LoopConstants.glucoseChartDefaultDisplayBoundClamped : LoopConstants.glucoseChartDefaultDisplayBound
++                self.statusCharts.setGlucoseDisplayRange(StatusChartsManager.glucoseScale(forWeek: weekGlucoseRange, defaultRange: defaultRange))
++            }
++
+             // Loop status background
+             if let loopStatusPeriods = loopStatusPeriods {
+                 charts.setLoopStatusPeriods(loopStatusPeriods)
+diff --git a/LoopKit/LoopKitUI/Charts/COBChart.swift b/LoopKit/LoopKitUI/Charts/COBChart.swift
+index 8348f44..5342332 100644
+--- a/LoopKit/LoopKitUI/Charts/COBChart.swift
++++ b/LoopKit/LoopKitUI/Charts/COBChart.swift
+@@ -38,6 +38,9 @@ public class COBChart: ChartProviding {
+     /// Display only: when Loop was running, not running, or had automatic dosing off. Empty draws no background.
+     public var loopStatusPeriods: [LoopStatusPeriod] = []
+ 
++    /// Display only. Holds the vertical scale steady while browsing.
++    public var yAxisRangeHolder = ChartYAxisRangeHolder()
++
+     private var cobChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -49,7 +52,8 @@ public extension COBChart {
+ 
+     func generate(withFrame frame: CGRect, xAxisModel: ChartAxisModel, xAxisValues: [ChartAxisValue], axisLabelSettings: ChartLabelSettings, guideLinesLayerSettings: ChartGuideLinesLayerSettings, colors: ChartColorPalette, chartSettings: ChartSettings, labelsWidthY: CGFloat, gestureRecognizer: UIGestureRecognizer?, traitCollection: UITraitCollection) -> Chart
+     {
+-        let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesWithChartPoints(cobPoints + cobDisplayRangePoints, minSegmentCount: 2, maxSegmentCount: 3, multiple: 10, axisValueGenerator: { ChartAxisValueDouble($0, labelSettings: axisLabelSettings) }, addPaddingSegmentIfEdge: false)
++        let heldRangePoints = yAxisRangeHolder.extraPoints(for: cobPoints + cobDisplayRangePoints)
++        let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesWithChartPoints(cobPoints + cobDisplayRangePoints + heldRangePoints, minSegmentCount: 2, maxSegmentCount: 3, multiple: 10, axisValueGenerator: { ChartAxisValueDouble($0, labelSettings: axisLabelSettings) }, addPaddingSegmentIfEdge: false)
+ 
+         let yAxisModel = ChartAxisModel(axisValues: yAxisValues, lineColor: colors.axisLine, labelSpaceReservationMode: .fixed(labelsWidthY))
+ 
+diff --git a/LoopKit/LoopKitUI/Charts/ChartGestures.swift b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+index b85e669..be7b7d0 100644
+--- a/LoopKit/LoopKitUI/Charts/ChartGestures.swift
++++ b/LoopKit/LoopKitUI/Charts/ChartGestures.swift
+@@ -14,6 +14,7 @@
+ 
+ import Foundation
+ import QuartzCore
++import SwiftCharts
+ import UIKit
+ 
+ /// Where the drawn chart sits relative to the visible area.
+@@ -477,3 +478,39 @@ public enum FloatingChartButtonPlacement {
+         )
+     }
+ }
++
++
++/// Keeps a chart's vertical scale from shrinking while the user browses, so scrolling
++/// doesn't rescale it. While holding, each drawing's range is widened to the widest
++/// range seen since holding began (starting from the range shown at that moment).
++public struct ChartYAxisRangeHolder {
++    public var isHolding = false {
++        didSet {
++            if isHolding != oldValue {
++                held = isHolding ? last : nil
++            }
++        }
++    }
++
++    private var held: ClosedRange<Double>?
++    private var last: ClosedRange<Double>?
++
++    public init() {}
++
++    /// Records this drawing's own range and returns extra points that keep the held range in view.
++    public mutating func extraPoints(for points: [ChartPoint]) -> [ChartPoint] {
++        let scalars = points.map { $0.y.scalar }
++        guard let lowest = scalars.min(), let highest = scalars.max() else {
++            return []
++        }
++        last = lowest...highest
++        guard isHolding else {
++            return []
++        }
++        let range = held.map { min($0.lowerBound, lowest)...max($0.upperBound, highest) } ?? (lowest...highest)
++        held = range
++        return [range.lowerBound, range.upperBound].map {
++            ChartPoint(x: ChartAxisValue(scalar: 0), y: ChartAxisValue(scalar: $0))
++        }
++    }
++}
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index 644d16a..56cf37c 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -55,6 +55,9 @@ public class DoseChart: ChartProviding {
+     /// (units on one shared axis). Empty draws the plain delivery chart.
+     public var activeInsulinPoints: [ChartPoint] = []
+ 
++    /// Display only. Holds the vertical scale steady while browsing.
++    public var yAxisRangeHolder = ChartYAxisRangeHolder()
++
+     private var doseChartCache: ChartPointsTouchHighlightLayerViewCache?
+ }
+ 
+@@ -84,8 +87,10 @@ public extension DoseChart {
+                 ChartPoint(x: $0.x, y: ChartAxisValueDoubleLog(actualDouble: $0.y.scalar, unitString: "U", formatter: doseFormatter))
+             }
+ 
++        let rangePoints = points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints
++        let heldRangePoints = yAxisRangeHolder.extraPoints(for: rangePoints)
+         let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
+-            chartPoints: points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints,
++            chartPoints: rangePoints + heldRangePoints,
+             minSegmentCount: 2,
+             maxSegmentCount: 3,
+             multiple: log(2) / 2,
