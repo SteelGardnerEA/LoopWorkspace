@@ -46,10 +46,10 @@ index be7b7d0..e6ab86a 100644
              if window.isLive, let viewport = container.viewport {
                  // Following now: zoom around "now" so it stays put, matching what the commit does.
 diff --git a/LoopKit/LoopKitUI/Views/ChartContainerView.swift b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
-index 1254aa7..f5ad2d2 100644
+index 1254aa7..6ccf208 100644
 --- a/LoopKit/LoopKitUI/Views/ChartContainerView.swift
 +++ b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
-@@ -103,38 +103,55 @@ public class ChartContainerView: UIView {
+@@ -103,47 +103,81 @@ public class ChartContainerView: UIView {
      }
  
      private func updateAxisLabelStrip() {
@@ -99,7 +99,7 @@ index 1254aa7..f5ad2d2 100644
 +        let size = CGSize(width: width, height: chartView.bounds.height)
 +        guard size.width > 0, size.height > 0 else {
 +            return
-+        }
+         }
 +        chartView.layoutIfNeeded()
 +        Self.displayIfNeeded(chartView.layer)
 +
@@ -117,7 +117,7 @@ index 1254aa7..f5ad2d2 100644
 +        axisLabelStrip.isUserInteractionEnabled = false
 +        if axisLabelStrip.superview !== self {
 +            addSubview(axisLabelStrip)
-         }
++        }
 +        bringSubviewToFront(axisLabelStrip)
 +    }
 +
@@ -127,7 +127,34 @@ index 1254aa7..f5ad2d2 100644
 +        layer.sublayers?.forEach { displayIfNeeded($0) }
      }
  
-     /// The first solid background color behind this view, for the pinned label strip.
+-    /// The first solid background color behind this view, for the pinned label strip.
++    /// The background behind the chart, for the pinned label strip: the cell's own color,
++    /// not the table's gray showing between cells.
+     private var opaqueBackgroundColor: UIColor {
+         var view: UIView? = self
+         while let current = view {
+             if let color = current.backgroundColor, color.cgColor.alpha > 0.99 {
+                 return color
+             }
++            if let cell = current as? UITableViewCell {
++                if let color = cell.backgroundConfiguration?.backgroundColor, color.cgColor.alpha > 0.99 {
++                    return color
++                }
++                if let color = cell.backgroundView?.backgroundColor, color.cgColor.alpha > 0.99 {
++                    return color
++                }
++                var parent = cell.superview
++                while let candidate = parent, !(candidate is UITableView) {
++                    parent = candidate.superview
++                }
++                if let tableView = parent as? UITableView, tableView.style != .plain {
++                    return .secondarySystemGroupedBackground
++                }
++                return .systemBackground
++            }
+             view = current.superview
+         }
+         return .systemBackground
 diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
 index c7d67af..5991bbb 100644
 --- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
