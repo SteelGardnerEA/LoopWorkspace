@@ -1,0 +1,29 @@
+diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+index bbde5ce..7b71c32 100644
+--- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+@@ -72,6 +72,9 @@ public class PredictedGlucoseChart: GlucoseChart, ChartProviding {
+     /// still loaded so press-and-hold can show the one made at the touched time.
+     public var showsPastPredictionsCloud = true
+ 
++    /// How far ahead each past forecast in the cloud is drawn.
++    public static let pastPredictionHorizon: TimeInterval = .hours(4)
++
+     /// Every drawn copy of the past predictions (the charts are drawn more than once, at more
+     /// than one width, e.g. when scrolled back). Only the ones on screen are focused.
+     private let pastPredictionsViews = NSHashTable<PastPredictionsView>.weakObjects()
+@@ -244,8 +247,13 @@ extension PredictedGlucoseChart {
+             )
+         }
+ 
++        // Each past forecast is drawn only for its first 4 hours.
+         let pastPredictionLines: [[CGPoint]] = pastPredictions.map { prediction in
+-            prediction.map {
++            guard let madeAt = prediction.first?.startDate else {
++                return []
++            }
++            let horizonEnd = madeAt.addingTimeInterval(Self.pastPredictionHorizon)
++            return prediction.filter { $0.startDate <= horizonEnd }.map {
+                 CGPoint(x: ChartAxisValueDate.scalarFromDate($0.startDate), y: $0.quantity.doubleValue(for: glucoseUnit))
+             }
+         }
