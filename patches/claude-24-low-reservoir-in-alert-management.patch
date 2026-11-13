@@ -1,3 +1,24 @@
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index dd3fa48..59b6c31 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -725,14 +725,14 @@ final class MealBreakdownHistory: ObservableObject {
+     init() {
+         if let url = fileURL, let data = try? Data(contentsOf: url),
+            let saved = try? JSONDecoder().decode([MealBreakdownRecord].self, from: data) {
+-            records = saved
++            records = saved.sorted { $0.mealTime > $1.mealTime }
+         }
+     }
+ 
+     func add(_ record: MealBreakdownRecord) {
+         var updated = [record] + records.filter { $0.id != record.id }
+         let oldest = Date().addingTimeInterval(-keepDuration)
+-        updated = Array(updated.filter { $0.savedAt >= oldest }.prefix(maximumCount))
++        updated = Array(updated.filter { $0.savedAt >= oldest }.sorted { $0.mealTime > $1.mealTime }.prefix(maximumCount))
+         save(updated)
+     }
+ 
 diff --git a/Loop/Loop/Views/AlertManagementView.swift b/Loop/Loop/Views/AlertManagementView.swift
 index 94e542a..465ac58 100644
 --- a/Loop/Loop/Views/AlertManagementView.swift
