@@ -1,3 +1,16 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index c5cfa31..6b50505 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -73,7 +73,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ 
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeLowReservoirPreview") {
+             // Settings → Low Reservoir Alerts.
+-            window?.rootViewController = UIHostingController(rootView: NavigationStack { LowReservoirAlertSettingsView() })
++            window?.rootViewController = UIHostingController(rootView: NavigationStack { AlertManagementView(checker: AlertPermissionsChecker(), alertMuter: AlertMuter()) })
+             window?.makeKeyAndVisible()
+             return
+         }
 diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
 index dd3fa48..59b6c31 100644
 --- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
