@@ -1,0 +1,299 @@
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index 56cf37c..a756778 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -164,7 +164,16 @@ public extension DoseChart {
+                 axisLabelSettings: axisLabelSettings,
+                 chartPoints: points.highlight,
+                 tintColor: colors.insulinTint,
+-                gestureRecognizer: gestureRecognizer
++                gestureRecognizer: gestureRecognizer,
++                extraText: { [activeInsulinPoints] chartPoint in
++                    // Active insulin at the same time as the delivery being shown.
++                    guard let nearest = activeInsulinPoints.min(by: { abs($0.x.scalar - chartPoint.x.scalar) < abs($1.x.scalar - chartPoint.x.scalar) }),
++                          abs(nearest.x.scalar - chartPoint.x.scalar) <= TimeInterval.minutes(15),
++                          let amount = doseFormatter.string(from: NSNumber(value: nearest.y.scalar)) else {
++                        return nil
++                    }
++                    return String(format: LocalizedString("%@ U active", comment: "Active insulin shown while pressing and holding the insulin chart (1: units)"), amount)
++                }
+             )
+         }
+ 
+diff --git a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+index 8839dff..ce9f9e7 100644
+--- a/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/PredictedGlucoseChart.swift
+@@ -72,6 +72,27 @@ public class PredictedGlucoseChart: GlucoseChart, ChartProviding {
+     /// still loaded so press-and-hold can show the one made at the touched time.
+     public var showsPastPredictionsCloud = true
+ 
++    /// Display only: the top of the glucose chart, in mg/dL. Readings and forecasts above it
++    /// are drawn at the top edge; press-and-hold still shows the real value. Nil: automatic.
++    public var glucoseCeilingMGDL: Double?
++
++    private var glucoseCeiling: Double? {
++        return glucoseCeilingMGDL.map { HKQuantity(unit: .milligramsPerDeciliter, doubleValue: $0).doubleValue(for: glucoseUnit) }
++    }
++
++    /// Points above the ceiling moved down to it, keeping their real value as the label.
++    private func cappedPoints(_ points: [ChartPoint]) -> [ChartPoint] {
++        guard let ceiling = glucoseCeiling else {
++            return points
++        }
++        return points.map { point in
++            guard point.y.scalar > ceiling else {
++                return point
++            }
++            return ChartPoint(x: point.x, y: ChartAxisValueCappedGlucose(ceiling, text: point.y.description))
++        }
++    }
++
+     /// How far ahead each past forecast in the cloud is drawn.
+     public static let pastPredictionHorizon: TimeInterval = .hours(4)
+ 
+@@ -220,7 +241,7 @@ extension PredictedGlucoseChart {
+         // Grid lines
+         let gridLayer = ChartGuideLinesForValuesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, settings: guideLinesLayerSettings, axisValuesX: Array(xAxisValues.dropFirst().dropLast()), axisValuesY: yAxisValues)
+ 
+-        let circles = ChartPointsScatterCirclesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, chartPoints: glucosePoints, displayDelay: 0, itemSize: CGSize(width: 4, height: 4), itemFillColor: colors.glucoseTint, optimized: true)
++        let circles = ChartPointsScatterCirclesLayer(xAxis: xAxisLayer.axis, yAxis: yAxisLayer.axis, chartPoints: cappedPoints(glucosePoints), displayDelay: 0, itemSize: CGSize(width: 4, height: 4), itemFillColor: colors.glucoseTint, optimized: true)
+ 
+         var alternatePrediction: ChartLayer?
+ 
+@@ -237,7 +258,7 @@ extension PredictedGlucoseChart {
+             let lineColor = (alternatePrediction == nil) ? colors.glucoseTint : UIColor.secondaryLabel
+ 
+             let lineModel = ChartLineModel.predictionLine(
+-                points: predictedGlucosePoints,
++                points: cappedPoints(predictedGlucosePoints),
+                 color: lineColor,
+                 width: 1
+             )
+@@ -250,7 +271,7 @@ extension PredictedGlucoseChart {
+                 xAxisLayer: xAxisLayer,
+                 yAxisLayer: yAxisLayer,
+                 axisLabelSettings: axisLabelSettings,
+-                chartPoints: glucosePoints + (alternatePredictedGlucosePoints ?? predictedGlucosePoints),
++                chartPoints: cappedPoints(glucosePoints + (alternatePredictedGlucosePoints ?? predictedGlucosePoints)),
+                 tintColor: colors.glucoseTint,
+                 gestureRecognizer: gestureRecognizer
+             )
+@@ -295,12 +316,12 @@ extension PredictedGlucoseChart {
+     }
+     
+     private func determineYAxisValues(axisLabelSettings: ChartLabelSettings? = nil) -> [ChartAxisValue] {
+-        let points = [
++        let points = cappedPoints([
+             glucosePoints, predictedGlucosePoints,
+             preMealOverrideDurationPoints, targetOverrideDurationPoints,
+             targetGlucosePoints.flatMap { $0.points },
+             glucoseDisplayRangePoints
+-        ].flatMap { $0 }
++        ].flatMap { $0 })
+ 
+         let axisValueGenerator: ChartAxisValueStaticGenerator
+         if let axisLabelSettings = axisLabelSettings {
+@@ -478,7 +499,11 @@ final class PastPredictionsLayer: ChartCoordsSpaceLayer {
+             return
+         }
+ 
+-        let view = PastPredictionsView(frame: chart.containerView.bounds, paths: paths, startXs: startXs, color: color, showsCloud: showsCloud)
++        // Only inside the plot: lines above the chart's top are cut off.
++        let plotTop = min(modelLocToContainerScreenLoc(y: yAxis.first), modelLocToContainerScreenLoc(y: yAxis.last))
++        let bounds = chart.containerView.bounds
++        let plotRect = CGRect(x: bounds.minX, y: plotTop, width: bounds.width, height: max(0, bounds.maxY - plotTop))
++        let view = PastPredictionsView(frame: bounds, paths: paths, startXs: startXs, color: color, showsCloud: showsCloud, plotRect: plotRect)
+         chart.containerView.insertSubview(view, at: 0)
+         onViewCreated?(view)
+     }
+@@ -515,7 +540,10 @@ final class PastPredictionsView: UIView {
+         focusedIndex = best
+     }
+ 
+-    init(frame: CGRect, paths: [CGPath], startXs: [CGFloat], color: UIColor, showsCloud: Bool) {
++    private let plotRect: CGRect
++
++    init(frame: CGRect, paths: [CGPath], startXs: [CGFloat], color: UIColor, showsCloud: Bool, plotRect: CGRect) {
++        self.plotRect = plotRect
+         self.paths = paths
+         self.startXs = startXs
+         self.color = color
+@@ -534,7 +562,7 @@ final class PastPredictionsView: UIView {
+         guard let context = UIGraphicsGetCurrentContext() else {
+             return
+         }
+-        context.clip(to: bounds)
++        context.clip(to: plotRect.intersection(bounds))
+         context.setLineJoin(.round)
+ 
+         if let index = focusedIndex, paths.indices.contains(index) {
+@@ -559,3 +587,18 @@ final class PastPredictionsView: UIView {
+         }
+     }
+ }
++
++
++/// A glucose value drawn at the chart's top but labeled with the real reading.
++final class ChartAxisValueCappedGlucose: ChartAxisValueDouble {
++    private let text: String
++
++    init(_ ceiling: Double, text: String) {
++        self.text = text
++        super.init(ceiling)
++    }
++
++    override var description: String {
++        return text
++    }
++}
+diff --git a/LoopKit/LoopKitUI/Views/ChartContainerView.swift b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+index 6ccf208..a7488e4 100644
+--- a/LoopKit/LoopKitUI/Views/ChartContainerView.swift
++++ b/LoopKit/LoopKitUI/Views/ChartContainerView.swift
+@@ -16,7 +16,6 @@ public class ChartContainerView: UIView {
+     public var viewport: ChartViewport? {
+         didSet {
+             if viewport != oldValue {
+-                clipsToBounds = viewport != nil
+                 setNeedsLayout()
+             }
+         }
+@@ -28,9 +27,28 @@ public class ChartContainerView: UIView {
+     /// A pinned copy of the chart's y-axis labels, used while the chart's own are slid off to the left.
+     private let axisLabelStrip = UIImageView()
+ 
++    /// Cuts off the wider chart at the left and right edges only, so the value shown above the
++    /// chart while pressing and holding isn't cut off.
++    private let sideMask: CALayer = {
++        let mask = CALayer()
++        mask.backgroundColor = UIColor.black.cgColor
++        return mask
++    }()
++
+     override public func layoutSubviews() {
+         super.layoutSubviews()
+ 
++        if viewport != nil {
++            clipsToBounds = false
++            CATransaction.begin()
++            CATransaction.setDisableActions(true)
++            sideMask.frame = CGRect(x: 0, y: -80, width: bounds.width, height: bounds.height + 160)
++            CATransaction.commit()
++            layer.mask = sideMask
++        } else {
++            layer.mask = nil
++        }
++
+         let frame = chartFrame()
+         if chartView == nil || generatedFrame != frame {
+             // 50 is the smallest height in which we should attempt to redraw a chart.
+diff --git a/LoopKit/LoopKitUI/Views/ChartPointsTouchHighlightLayerViewCache.swift b/LoopKit/LoopKitUI/Views/ChartPointsTouchHighlightLayerViewCache.swift
+index 42cf4d1..f0c91f0 100644
+--- a/LoopKit/LoopKitUI/Views/ChartPointsTouchHighlightLayerViewCache.swift
++++ b/LoopKit/LoopKitUI/Views/ChartPointsTouchHighlightLayerViewCache.swift
+@@ -36,7 +36,8 @@ final class ChartPointsTouchHighlightLayerViewCache {
+ 
+     private(set) var highlightLayer: ChartPointsTouchHighlightLayer<ChartPoint, UIView>!
+ 
+-    init(xAxisLayer: ChartAxisLayer, yAxisLayer: ChartAxisLayer, axisLabelSettings: ChartLabelSettings, chartPoints: [ChartPoint], tintColor: UIColor, gestureRecognizer: UIGestureRecognizer? = nil, onCompleteHighlight: (() -> Void)? = nil) {
++    /// `extraText` adds to the value shown while pressing and holding (e.g. active insulin).
++    init(xAxisLayer: ChartAxisLayer, yAxisLayer: ChartAxisLayer, axisLabelSettings: ChartLabelSettings, chartPoints: [ChartPoint], tintColor: UIColor, gestureRecognizer: UIGestureRecognizer? = nil, onCompleteHighlight: (() -> Void)? = nil, extraText: ((ChartPoint) -> String?)? = nil) {
+ 
+         self.axisLabelSettings = axisLabelSettings
+ 
+@@ -81,8 +82,9 @@ final class ChartPointsTouchHighlightLayerViewCache {
+                     containerView.addSubview(point)
+                 }
+ 
+-                if let text = chartPointModel.chartPoint.y.labels.first?.text {
++                if let valueText = chartPointModel.chartPoint.y.labels.first?.text {
+                     let label = strongSelf.labelY
++                    let text = [valueText, extraText?(chartPointModel.chartPoint)].compactMap { $0 }.joined(separator: " · ")
+ 
+                     label.text = text
+                     label.sizeToFit()
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 2a4e2d6..25964b5 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -34,6 +34,9 @@ class StatusChartsManager: ChartsManager {
+         let dose = DoseChart()
+         let cob = COBChart()
+         self.glucose = glucose
++        // Steel's choice: the main glucose chart tops out at 300 mg/dL. Higher readings sit on
++        // the top edge; press-and-hold shows the real number.
++        glucose.glucoseCeilingMGDL = Self.glucoseChartCeiling
+         self.iob = iob
+         self.dose = dose
+         self.cob = cob
+@@ -218,6 +221,9 @@ extension StatusChartsManager {
+     /// Trio-style glucose scale from the last 7 days of readings, so the chart doesn't
+     /// rescale as it scrolls: the top steps through 200, 250, 300, 350, and 400 mg/dL,
+     /// and the bottom sits just below the 7-day low. Never narrower than `defaultRange`.
++    /// The main glucose chart's top, in mg/dL.
++    static let glucoseChartCeiling: Double = 300
++
+     static func glucoseScale(forWeek week: ClosedRange<Double>, defaultRange: ClosedRange<HKQuantity>) -> ClosedRange<HKQuantity> {
+         let defaultLower = defaultRange.lowerBound.doubleValue(for: .milligramsPerDeciliter)
+         let defaultUpper = defaultRange.upperBound.doubleValue(for: .milligramsPerDeciliter)
+@@ -236,7 +242,8 @@ extension StatusChartsManager {
+         }
+ 
+         let bottom = max(39, (min(week.lowerBound, defaultLower, 70) / 10).rounded(.down) * 10)
+-        return HKQuantity(unit: .milligramsPerDeciliter, doubleValue: bottom)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: max(top, defaultUpper))
++        let cappedTop = min(max(top, defaultUpper), glucoseChartCeiling)
++        return HKQuantity(unit: .milligramsPerDeciliter, doubleValue: bottom)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: cappedTop)
+     }
+ }
+ 
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index fe62f08..95ecfa3 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -168,6 +168,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+ /// - `-ClaudeChartPreviewZoomHours 24`: 24 hours on screen
+ /// - `-ClaudeChartPreviewDragPoints 120`: frozen mid-drag, 120 points to the right
+ /// - `-ClaudeChartPreviewHoldX 200`: frozen press-and-hold at x = 200 on the glucose chart
++/// - `-ClaudeChartPreviewHigh 1`: glucose swings up to about 360, to check the 300 ceiling
+ final class ChartPreviewViewController: UIViewController {
+     private lazy var charts = StatusChartsManager(colors: .primary, settings: .default, traitCollection: traitCollection)
+     private var placedViews: [UIView] = []
+@@ -191,6 +192,14 @@ final class ChartPreviewViewController: UIViewController {
+ 
+     private let now = Date()
+ 
++    private var glucoseMid: Double {
++        return argument("-ClaudeChartPreviewHigh") != nil ? 220 : 130
++    }
++
++    private var glucoseSwing: Double {
++        return argument("-ClaudeChartPreviewHigh") != nil ? 140 : 45
++    }
++
+     private func argument(_ name: String) -> Double? {
+         let arguments = ProcessInfo.processInfo.arguments
+         guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
+@@ -329,7 +338,7 @@ final class ChartPreviewViewController: UIViewController {
+         }
+ 
+         let glucose = pastTimes.map {
+-            SimpleGlucoseValue(startDate: $0, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 130 + 45 * wave($0, period: .hours(4))))
++            SimpleGlucoseValue(startDate: $0, quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: glucoseMid + glucoseSwing * wave($0, period: .hours(4))))
+         }
+         charts.setGlucoseValues(glucose)
+         if historyEnd == nil {
+@@ -390,11 +399,11 @@ final class ChartPreviewViewController: UIViewController {
+         // over about 45 minutes, so the lines fan out around what really happened.
+         let glucosePeriod = TimeInterval.hours(4)
+         func glucoseAt(_ date: Date) -> Double {
+-            130 + 45 * wave(date, period: glucosePeriod)
++            glucoseMid + glucoseSwing * wave(date, period: glucosePeriod)
+         }
+         func slopePerMinuteAt(_ date: Date) -> Double {
+             let angle = date.timeIntervalSince1970 / glucosePeriod * 2 * .pi
+-            return 45 * cos(angle) * 2 * .pi / glucosePeriod.minutes
++            return glucoseSwing * cos(angle) * 2 * .pi / glucosePeriod.minutes
+         }
+         let predictionDates = loopDates.filter { $0 >= start.addingTimeInterval(.hours(-6)) && $0 <= dataEnd }
+         let pastPredictions: [[GlucoseValue]] = predictionDates.map { madeAt -> [GlucoseValue] in
