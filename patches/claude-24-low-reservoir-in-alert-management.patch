@@ -1,0 +1,69 @@
+diff --git a/Loop/Loop/Views/AlertManagementView.swift b/Loop/Loop/Views/AlertManagementView.swift
+index 94e542a..465ac58 100644
+--- a/Loop/Loop/Views/AlertManagementView.swift
++++ b/Loop/Loop/Views/AlertManagementView.swift
+@@ -57,6 +57,8 @@ struct AlertManagementView: View {
+         )
+     }
+ 
++    @State private var lowReservoirInterval: TimeInterval = LowReservoirAlertThrottle.repeatInterval
++
+     public init(checker: AlertPermissionsChecker, alertMuter: AlertMuter = AlertMuter()) {
+         self.checker = checker
+         self.alertMuter = alertMuter
+@@ -71,6 +73,7 @@ struct AlertManagementView: View {
+             if FeatureFlags.missedMealNotifications {
+                 missedMealAlertSection
+             }
++            lowReservoirAlertSection
+         }
+         .navigationTitle(NSLocalizedString("Alert Management", comment: "Title of alert management screen"))
+     }
+@@ -244,6 +247,28 @@ struct AlertManagementView: View {
+             buttons: muteAlertDurationOptions)
+     }
+     
++    /// How often the low reservoir notification may repeat (Steel's setting; any pump).
++    private var lowReservoirAlertSection: some View {
++        Section(footer: DescriptiveText(label: NSLocalizedString("The first low reservoir alert always comes through. After that, it repeats no more often than this. \"Reservoir empty\" and every other alert are not affected, and the pump's own beeps are unchanged.", comment: "Low reservoir alert repeat description"))) {
++            Picker(NSLocalizedString("Low Reservoir · Repeat every", comment: "Low reservoir alert repeat picker title"), selection: lowReservoirRepeatInterval) {
++                ForEach(LowReservoirAlertThrottle.intervalChoices, id: \.self) { choice in
++                    Text(LowReservoirAlertThrottle.intervalText(choice)).tag(choice)
++                }
++            }
++            .pickerStyle(.menu)
++        }
++    }
++
++    private var lowReservoirRepeatInterval: Binding<TimeInterval> {
++        Binding(
++            get: { lowReservoirInterval },
++            set: { newValue in
++                lowReservoirInterval = newValue
++                LowReservoirAlertThrottle.repeatInterval = newValue
++            }
++        )
++    }
++
+     private var missedMealAlertSection: some View {
+         Section(footer: DescriptiveText(label: NSLocalizedString("When enabled, Loop can notify you when it detects a meal that wasn't logged.", comment: "Description of missed meal notifications."))) {
+             Toggle(NSLocalizedString("Missed Meal Notifications", comment: "Title for missed meal notifications toggle"), isOn: missedMealNotificationsEnabled)
+diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
+index 9c71d3a..b4e8721 100644
+--- a/Loop/Loop/Views/SettingsView.swift
++++ b/Loop/Loop/Views/SettingsView.swift
+@@ -287,14 +287,6 @@ extension SettingsView {
+                             descriptiveText: NSLocalizedString("Default Meal Formula", comment: "Descriptive text for Meal Breakdown settings"))
+             }
+ 
+-            NavigationLink(destination: LowReservoirAlertSettingsView()) {
+-                LargeButton(action: { },
+-                            includeArrow: false,
+-                            imageView: Image(systemName: "bell.badge").resizable().aspectRatio(contentMode: .fit).foregroundColor(.orange).frame(width: 30),
+-                            label: NSLocalizedString("Low Reservoir Alerts", comment: "Title text for button to Low Reservoir Alerts settings"),
+-                            descriptiveText: NSLocalizedString("How Often to Repeat", comment: "Descriptive text for Low Reservoir Alerts settings"))
+-            }
+-
+             ForEach(pluginMenuItems.filter {$0.section == .configuration}) { item in
+                 item.view
+             }
