@@ -1,0 +1,62 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 9677dce..c50ea45 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -309,9 +309,7 @@ final class ChartPreviewViewController: UIViewController {
+             configuration.imagePlacement = .trailing
+             configuration.imagePadding = 6
+             configuration.title = "Back to now"
+-            let formatter = DateIntervalFormatter()
+-            formatter.dateTemplate = "EEEMMMdjmm"
+-            configuration.subtitle = formatter.string(from: window.start(now: now), to: window.end(now: now))
++            configuration.subtitle = StatusTableViewController.chartRangeText(from: window.start(now: now), to: window.end(now: now))
+             nowButton.configuration = configuration
+             if let navigationController = navigationController {
+                 // Same placement code as the real main screen.
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 65f857a..ed99d8a 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -442,12 +442,30 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         return button
+     }()
+ 
+-    private lazy var chartRangeFormatter: DateIntervalFormatter = {
+-        let formatter = DateIntervalFormatter()
+-        formatter.dateTemplate = "EEEMMMdjmm"
++    /// "Thu, Nov 12, 1:11 PM", with AM/PM always shown.
++    private static let chartRangeDateTimeFormatter: DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.setLocalizedDateFormatFromTemplate("EEEMMMdjmm")
+         return formatter
+     }()
+ 
++    /// "9:00 PM", with AM/PM always shown.
++    private static let chartRangeTimeFormatter: DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.setLocalizedDateFormatFromTemplate("jmm")
++        return formatter
++    }()
++
++    /// The visible range, with AM/PM on both ends (a date interval formatter drops the first one
++    /// when both ends share it). The date is repeated only when the range spans two days.
++    static func chartRangeText(from start: Date, to end: Date) -> String {
++        let startText = chartRangeDateTimeFormatter.string(from: start)
++        let endText = Calendar.current.isDate(start, inSameDayAs: end)
++            ? chartRangeTimeFormatter.string(from: end)
++            : chartRangeDateTimeFormatter.string(from: end)
++        return "\(startText) – \(endText)"
++    }
++
+     private func configureChartGestures() {
+         chartGestures.inspectRecognizer = charts.gestureRecognizer
+         charts.gestureRecognizer?.addTarget(self, action: #selector(inspectGestureChanged(_:)))
+@@ -565,7 +583,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         let now = Date()
+         var configuration = chartNowButton.configuration ?? .filled()
+         configuration.title = NSLocalizedString("Back to now", comment: "Button that returns the charts to the current time")
+-        configuration.subtitle = chartRangeFormatter.string(from: window.start(now: now), to: window.end(now: now))
++        configuration.subtitle = Self.chartRangeText(from: window.start(now: now), to: window.end(now: now))
+         chartNowButton.configuration = configuration
+         chartNowButton.isHidden = false
+         // Added only once it is needed, and placed by frame (no layout rules tied to the toolbar).
