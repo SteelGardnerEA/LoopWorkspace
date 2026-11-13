@@ -1,0 +1,101 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 95ecfa3..db9c672 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -435,6 +435,7 @@ enum MealBreakdownPreview {
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewOneOff") {
+             // A one-meal change: 50% of starches medium, 6 min per gram of fat.
+             viewModel.mealFormula.mediumStarchPercent = 50
++            viewModel.mealFormula.delayedStarchPercent = 50
+             viewModel.mealFormula.fatMinutesPerGram = 6
+         }
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewConfirm") {
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index ad4dbb0..b530298 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -463,8 +463,10 @@ final class CarbEntryViewModel: ObservableObject {
+ /// The adjustable numbers in Steel's meal formula. The saved copy (Settings → Meal Breakdown) is
+ /// the default for each meal; the Meal Breakdown tab can change them for one meal.
+ struct MealBreakdownFormula: Codable, Equatable {
+-    /// Percent of starches in the 🌮 medium entry; the 🍕 delayed entry gets the rest.
++    /// Percent of starches in the 🌮 medium entry.
+     var mediumStarchPercent: Double = 60
++    /// Percent of starches in the 🍕 delayed entry. Set separately; the two don't have to add to 100.
++    var delayedStarchPercent: Double = 40
+     /// Percent of protein grams added to the 🍕 delayed entry.
+     var proteinPercent: Double = 50
+     /// Minutes of delay per gram of protein.
+@@ -474,8 +476,22 @@ struct MealBreakdownFormula: Codable, Equatable {
+ 
+     static let standard = MealBreakdownFormula()
+ 
+-    var delayedStarchPercent: Double {
+-        return 100 - mediumStarchPercent
++    init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case mediumStarchPercent, delayedStarchPercent, proteinPercent, proteinMinutesPerGram, fatMinutesPerGram
++    }
++
++    /// Reads a saved formula; anything missing (e.g. saved before a value existed) uses the standard number.
++    init(from decoder: Decoder) throws {
++        let container = try decoder.container(keyedBy: CodingKeys.self)
++        let standard = MealBreakdownFormula.standard
++        mediumStarchPercent = try container.decodeIfPresent(Double.self, forKey: .mediumStarchPercent) ?? standard.mediumStarchPercent
++        // Saved before the delayed share had its own setting: keep it as "the rest".
++        delayedStarchPercent = try container.decodeIfPresent(Double.self, forKey: .delayedStarchPercent) ?? (100 - mediumStarchPercent)
++        proteinPercent = try container.decodeIfPresent(Double.self, forKey: .proteinPercent) ?? standard.proteinPercent
++        proteinMinutesPerGram = try container.decodeIfPresent(Double.self, forKey: .proteinMinutesPerGram) ?? standard.proteinMinutesPerGram
++        fatMinutesPerGram = try container.decodeIfPresent(Double.self, forKey: .fatMinutesPerGram) ?? standard.fatMinutesPerGram
+     }
+ 
+     private static let defaultsKey = "com.loopkit.Loop.MealBreakdownFormula"
+@@ -500,6 +516,7 @@ struct MealBreakdownFormula: Codable, Equatable {
+     var clamped: MealBreakdownFormula {
+         var formula = self
+         formula.mediumStarchPercent = min(max(mediumStarchPercent, 0), 100)
++        formula.delayedStarchPercent = min(max(delayedStarchPercent, 0), 100)
+         formula.proteinPercent = min(max(proteinPercent, 0), 100)
+         formula.proteinMinutesPerGram = min(max(proteinMinutesPerGram, 0), 30)
+         formula.fatMinutesPerGram = min(max(fatMinutesPerGram, 0), 30)
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index a580944..e17a1a6 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -528,11 +528,19 @@ struct MealBreakdownFormulaRows: View {
+             Stepper(value: $formula.mediumStarchPercent, in: 0...100, step: 5) {
+                 row(
+                     title: NSLocalizedString("🌮 Starches in medium", comment: "Meal formula: percent of starches in the medium entry"),
+-                    detail: String(format: NSLocalizedString("🍕 delayed gets %@", comment: "Meal formula: the rest of the starches go to the delayed entry (1: percent)"), percent(formula.delayedStarchPercent)),
++                    detail: NSLocalizedString("Now, over 3 h", comment: "Meal formula: when the medium entry runs"),
+                     value: percent(formula.mediumStarchPercent)
+                 )
+             }
+             CardSectionDivider()
++            Stepper(value: $formula.delayedStarchPercent, in: 0...100, step: 5) {
++                row(
++                    title: NSLocalizedString("🍕 Starches in delayed", comment: "Meal formula: percent of starches in the delayed entry"),
++                    detail: String(format: NSLocalizedString("Starts 3 h later · 🌮 + 🍕 = %@", comment: "Meal formula: when the delayed entry starts, and the two starch shares added up (1: percent)"), percent(formula.mediumStarchPercent + formula.delayedStarchPercent)),
++                    value: percent(formula.delayedStarchPercent)
++                )
++            }
++            CardSectionDivider()
+             Stepper(value: $formula.proteinPercent, in: 0...100, step: 5) {
+                 row(
+                     title: NSLocalizedString("🍕 Protein added", comment: "Meal formula: percent of protein grams added to the delayed entry"),
+@@ -593,12 +601,12 @@ struct MealBreakdownSettingsView: View {
+ 
+     var body: some View {
+         List {
+-            Section(footer: Text("Each Meal Breakdown starts from these numbers. You can change them for a single meal on the carb entry screen.\n\nStarches = carbs − sugars − fiber. 🍭 sugars now; 🌮 the medium share of starches now, over 3 h; 🍕 the rest of the starches plus the protein share, starting 3 h after the meal and running until the protein and fat delay ends. These are ordinary carb entries; Loop's dosing math is unchanged.", comment: "Meal Breakdown settings footer")) {
++            Section(footer: Text("Each Meal Breakdown starts from these numbers. You can change them for a single meal on the carb entry screen.\n\nStarches = carbs − sugars − fiber. 🍭 sugars now; 🌮 the medium share of starches now, over 3 h; 🍕 the delayed share of starches plus the protein share, starting 3 h after the meal and running until the protein and fat delay ends. These are ordinary carb entries; Loop's dosing math is unchanged.", comment: "Meal Breakdown settings footer")) {
+                 MealBreakdownFormulaRows(formula: $formula)
+                     .padding(.vertical, 4)
+             }
+             Section {
+-                Button(NSLocalizedString("Reset to Defaults (60%, 50%, 4 min, 8 min)", comment: "Meal Breakdown settings: reset button")) {
++                Button(NSLocalizedString("Reset to Defaults (60%, 40%, 50%, 4 min, 8 min)", comment: "Meal Breakdown settings: reset button")) {
+                     formula = .standard
+                 }
+                 .disabled(formula == .standard)
