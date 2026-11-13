@@ -1,0 +1,144 @@
+diff --git a/Loop/Loop/Managers/Alerts/AlertManager.swift b/Loop/Loop/Managers/Alerts/AlertManager.swift
+index 83f2a12..a7eaa11 100644
+--- a/Loop/Loop/Managers/Alerts/AlertManager.swift
++++ b/Loop/Loop/Managers/Alerts/AlertManager.swift
+@@ -376,6 +376,11 @@ extension AlertManager: AlertManagerResponder {
+ extension AlertManager: AlertIssuer {
+ 
+     public func issueAlert(_ alert: Alert) {
++        // Steel's setting: a low reservoir alert repeats at most once per chosen interval.
++        if LowReservoirAlertThrottle.shouldSuppress(alert) {
++            log.default("Low reservoir alert suppressed (repeat interval): %{public}@", alert.identifier.value)
++            return
++        }
+         guard playbackFinished else {
+             deferredAlerts.append(alert)
+             return
+@@ -869,3 +874,53 @@ fileprivate extension UserDefaults {
+         }
+     }
+ }
++
++
++/// Low reservoir alerts from any pump (Omnipod, Medtronic, Medtrum) are passed on the first time,
++/// then at most once per `repeatInterval` (Settings → Low Reservoir Alerts). Other alerts, including
++/// "reservoir empty", are never held back. Only the phone notification is affected; the pump's own
++/// beeps and Loop's dosing are unchanged.
++enum LowReservoirAlertThrottle {
++    private static let intervalKey = "com.loopkit.Loop.LowReservoirAlertRepeatInterval"
++    private static let lastIssuedKey = "com.loopkit.Loop.LowReservoirAlertLastIssued"
++
++    static let defaultInterval: TimeInterval = .hours(1)
++    static let intervalChoices: [TimeInterval] = [.minutes(5), .minutes(30), .hours(1), .hours(2), .hours(4), .hours(8)]
++
++    static var repeatInterval: TimeInterval {
++        get {
++            let stored = UserDefaults.standard.double(forKey: intervalKey)
++            return stored > 0 ? stored : defaultInterval
++        }
++        set {
++            UserDefaults.standard.set(newValue, forKey: intervalKey)
++        }
++    }
++
++    static func isLowReservoir(_ identifier: Alert.Identifier) -> Bool {
++        let name = identifier.alertIdentifier.lowercased()
++        return name.contains("reservoir") && !name.contains("empty")
++    }
++
++    /// True if the same low reservoir alert was passed on less than `repeatInterval` ago.
++    static func shouldSuppress(_ alert: Alert, now: Date = Date()) -> Bool {
++        guard isLowReservoir(alert.identifier), alert.trigger == .immediate else {
++            return false
++        }
++        var lastIssued = (UserDefaults.standard.dictionary(forKey: lastIssuedKey) as? [String: Date]) ?? [:]
++        let key = alert.identifier.value
++        if let previous = lastIssued[key], now.timeIntervalSince(previous) < repeatInterval {
++            return true
++        }
++        lastIssued[key] = now
++        UserDefaults.standard.set(lastIssued, forKey: lastIssuedKey)
++        return false
++    }
++
++    static func intervalText(_ interval: TimeInterval) -> String {
++        let formatter = DateComponentsFormatter()
++        formatter.allowedUnits = [.hour, .minute]
++        formatter.unitsStyle = .full
++        return formatter.string(from: interval) ?? ""
++    }
++}
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index db9c672..9677dce 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+     static var isChartPreview: Bool {
+         #if DEBUG
+         let arguments = ProcessInfo.processInfo.arguments
+-        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview")
++        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview") || arguments.contains("-ClaudeLowReservoirPreview")
+         #else
+         return false
+         #endif
+@@ -53,6 +53,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         #if DEBUG
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeLowReservoirPreview") {
++            // Settings → Low Reservoir Alerts.
++            window?.rootViewController = UIHostingController(rootView: NavigationStack { LowReservoirAlertSettingsView() })
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealSettingsPreview") {
+             // Settings → Meal Breakdown.
+             let settings = UIHostingController(rootView: NavigationStack { MealBreakdownSettingsView() })
+diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
+index 9d33daf..06e0572 100644
+--- a/Loop/Loop/Views/SettingsView.swift
++++ b/Loop/Loop/Views/SettingsView.swift
+@@ -287,6 +287,14 @@ extension SettingsView {
+                             descriptiveText: NSLocalizedString("Default Meal Formula", comment: "Descriptive text for Meal Breakdown settings"))
+             }
+ 
++            NavigationLink(destination: LowReservoirAlertSettingsView()) {
++                LargeButton(action: { },
++                            includeArrow: false,
++                            imageView: Image(systemName: "bell.badge").resizable().aspectRatio(contentMode: .fit).foregroundColor(.orange).frame(width: 30),
++                            label: NSLocalizedString("Low Reservoir Alerts", comment: "Title text for button to Low Reservoir Alerts settings"),
++                            descriptiveText: NSLocalizedString("How Often to Repeat", comment: "Descriptive text for Low Reservoir Alerts settings"))
++            }
++
+             ForEach(pluginMenuItems.filter {$0.section == .configuration}) { item in
+                 item.view
+             }
+@@ -706,3 +714,27 @@ public struct SettingsView_Previews: PreviewProvider {
+         }
+     }
+ }
++
++
++/// Settings → Low Reservoir Alerts: how often the low reservoir notification may repeat.
++struct LowReservoirAlertSettingsView: View {
++    @State private var interval: TimeInterval = LowReservoirAlertThrottle.repeatInterval
++
++    var body: some View {
++        List {
++            Section(footer: Text("The first low reservoir alert always comes through. After that it repeats at most this often. \"Reservoir empty\" and every other alert are not affected, and the pump's own beeps are unchanged.", comment: "Low Reservoir Alerts settings footer")) {
++                Picker(NSLocalizedString("Repeat at most every", comment: "Low Reservoir Alerts: picker title"), selection: $interval) {
++                    ForEach(LowReservoirAlertThrottle.intervalChoices, id: \.self) { choice in
++                        Text(LowReservoirAlertThrottle.intervalText(choice)).tag(choice)
++                    }
++                }
++                .pickerStyle(.inline)
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(NSLocalizedString("Low Reservoir Alerts", comment: "Low Reservoir Alerts settings title"))
++        .onChange(of: interval) { _, newValue in
++            LowReservoirAlertThrottle.repeatInterval = newValue
++        }
++    }
++}
