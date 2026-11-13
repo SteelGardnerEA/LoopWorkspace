@@ -1,0 +1,95 @@
+diff --git a/Loop/Loop/View Models/BolusEntryViewModel.swift b/Loop/Loop/View Models/BolusEntryViewModel.swift
+index 39891bd..f68e1ff 100644
+--- a/Loop/Loop/View Models/BolusEntryViewModel.swift	
++++ b/Loop/Loop/View Models/BolusEntryViewModel.swift	
+@@ -485,6 +485,14 @@ final class BolusEntryViewModel: ObservableObject {
+         }
+     }
+ 
++    /// Each saved Meal Breakdown entry's name and grams, e.g. ("🍭 Sugars", "17 g").
++    var savedMealCarbEntryLines: [(name: String, grams: String)] {
++        let formatter = QuantityFormatter(for: .gram())
++        return savedMealCarbEntries.map { entry in
++            (name: entry.foodType ?? "", grams: formatter.string(from: entry.quantity) ?? "")
++        }
++    }
++
+     /// "🍭 17 g · 🌮 55 g · 🍕 59 g" for the Meal Breakdown entries already saved, or nil.
+     var savedMealCarbEntriesString: String? {
+         guard !savedMealCarbEntries.isEmpty else {
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index b530298..512b6b2 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -231,7 +231,7 @@ final class CarbEntryViewModel: ObservableObject {
+             let when = part.start > now.addingTimeInterval(.minutes(1))
+                 ? String(format: NSLocalizedString("starting %@", comment: "Meal breakdown: when a delayed carb entry starts (1: time)"), timeFormatter.string(from: part.start))
+                 : NSLocalizedString("now", comment: "Meal breakdown: carb entry starts now")
+-            return "\(part.emoji) \(grams) g \(when), over \(MealBreakdown.durationText(part.absorptionTime))"
++            return "\(part.foodType): \(grams) g \(when), over \(MealBreakdown.durationText(part.absorptionTime))"
+         }
+         let footer = NSLocalizedString("They are saved now. Loop then shows its bolus recommendation.", comment: "Meal breakdown confirmation footer")
+         return (lines + ["", footer]).joined(separator: "\n")
+@@ -250,7 +250,7 @@ final class CarbEntryViewModel: ObservableObject {
+                 date: now,
+                 quantity: HKQuantity(unit: .gram(), doubleValue: part.grams),
+                 startDate: part.start,
+-                foodType: part.emoji,
++                foodType: part.foodType,
+                 absorptionTime: part.absorptionTime
+             )
+         }
+@@ -567,6 +567,23 @@ struct MealBreakdown: Equatable {
+         let grams: Double
+         let start: Date
+         let absorptionTime: TimeInterval
++
++        /// Short name saved with the carb entry, after the emoji.
++        var title: String {
++            switch emoji {
++            case "🍭":
++                return NSLocalizedString("Sugars", comment: "Meal breakdown entry name: sugars, now")
++            case "🍕":
++                return NSLocalizedString("Delayed", comment: "Meal breakdown entry name: delayed starches and protein")
++            default:
++                return NSLocalizedString("Starches", comment: "Meal breakdown entry name: starches, medium")
++            }
++        }
++
++        /// "🍭 Sugars": what the carb entry is saved as.
++        var foodType: String {
++            return "\(emoji) \(title)"
++        }
+     }
+ 
+     /// The carb entries to save, in whole grams. Parts under 1 gram are left out.
+diff --git a/Loop/Loop/Views/BolusEntryView.swift b/Loop/Loop/Views/BolusEntryView.swift
+index 8f09b5d..eff4fa0 100644
+--- a/Loop/Loop/Views/BolusEntryView.swift
++++ b/Loop/Loop/Views/BolusEntryView.swift
+@@ -222,13 +222,18 @@ struct BolusEntryView: View {
+ 
+     @ViewBuilder
+     private var savedMealCarbEntriesRow: some View {
+-        if let mealString = viewModel.savedMealCarbEntriesString {
+-            HStack {
+-                Text("Meal", comment: "Label for the saved Meal Breakdown entries row on bolus screen")
+-                Spacer()
+-                Text(mealString)
+-                    .foregroundColor(Color(.carbTintColor))
+-                    .modifier(LabelBackground())
++        if viewModel.savedMealCarbEntriesString != nil {
++            VStack(alignment: .leading, spacing: 6) {
++                Text("Meal Breakdown", comment: "Label for the saved Meal Breakdown entries on bolus screen")
++                ForEach(Array(viewModel.savedMealCarbEntryLines.enumerated()), id: \.offset) { _, line in
++                    HStack {
++                        Text(line.name)
++                        Spacer()
++                        Text(line.grams)
++                            .foregroundColor(Color(.carbTintColor))
++                            .modifier(LabelBackground())
++                    }
++                }
+             }
+         }
+     }
