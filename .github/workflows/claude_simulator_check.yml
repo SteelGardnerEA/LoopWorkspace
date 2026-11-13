@@ -131,6 +131,7 @@ jobs:
           shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
           shot charts-light-hold -ClaudeChartPreviewHoursBack 6 -ClaudeChartPreviewHoldX 220
           shot charts-light-hold-live -ClaudeChartPreviewHoldX 120
+          shot charts-light-high -ClaudeChartPreviewHigh 1
           shot meal-breakdown -ClaudeMealPreview
           shot meal-breakdown-confirm -ClaudeMealPreview -ClaudeMealPreviewConfirm
           shot meal-breakdown-one-off -ClaudeMealPreview -ClaudeMealPreviewOneOff -ClaudeMealPreviewConfirm
@@ -155,7 +156,7 @@ jobs:
           # Small JPEG copies, text-encoded between markers, so they can be read from the log.
           shopt -s nullglob
           # Printed slowly in small chunks, because a fast burst can be dropped from the log.
-          for png in build/screenshots/charts-light-hold.png build/screenshots/charts-light-hold-live.png build/screenshots/charts-light.png; do
+          for png in build/screenshots/charts-light-high.png build/screenshots/charts-light.png; do
             name=$(basename "${png}" .png)
             sips -Z 900 -s format jpeg -s formatOptions 45 "${png}" --out "build/${name}.jpg" >/dev/null
             base64 -b 100 -i "build/${name}.jpg" > "build/${name}.b64"
