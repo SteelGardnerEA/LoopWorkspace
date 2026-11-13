@@ -1,0 +1,109 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index c50ea45..c163eae 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -303,11 +303,7 @@ final class ChartPreviewViewController: UIViewController {
+         }
+ 
+         if !window.isLive {
+-            var configuration = UIButton.Configuration.filled()
+-            configuration.cornerStyle = .capsule
+-            configuration.image = UIImage(systemName: "arrow.right.to.line")
+-            configuration.imagePlacement = .trailing
+-            configuration.imagePadding = 6
++            var configuration = StatusTableViewController.chartNowButtonConfiguration()
+             configuration.title = "Back to now"
+             configuration.subtitle = StatusTableViewController.chartRangeText(from: window.start(now: now), to: window.end(now: now))
+             nowButton.configuration = configuration
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index ed99d8a..477dc05 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -426,13 +426,33 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     /// New data arrived during a gesture; redraw once it settles.
+     private var chartRedrawPending = false
+ 
+-    private lazy var chartNowButton: UIButton = {
++    /// The compact "Back to now" button style (also used by the debug screenshot preview).
++    static func chartNowButtonConfiguration() -> UIButton.Configuration {
+         var configuration = UIButton.Configuration.filled()
+         configuration.cornerStyle = .capsule
+         configuration.image = UIImage(systemName: "arrow.right.to.line")
+         configuration.imagePlacement = .trailing
+         configuration.imagePadding = 6
+         configuration.titleAlignment = .center
++        // Compact, so it covers less of the charts.
++        configuration.buttonSize = .small
++        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 12)
++        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .footnote)
++        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
++            var attributes = attributes
++            attributes.font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
++            return attributes
++        }
++        configuration.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
++            var attributes = attributes
++            attributes.font = UIFont.preferredFont(forTextStyle: .caption2)
++            return attributes
++        }
++        return configuration
++    }
++
++    private lazy var chartNowButton: UIButton = {
++        let configuration = Self.chartNowButtonConfiguration()
+         let button = UIButton(configuration: configuration)
+         button.isHidden = true
+         button.accessibilityLabel = NSLocalizedString("Back to now", comment: "Accessibility label for the button that returns the charts to the current time")
+@@ -578,6 +598,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         let window = chartGestures.window
+         guard onscreen, !window.isLive else {
+             chartNowButton.isHidden = true
++            setChartNowButtonInset(0)
+             return
+         }
+         let now = Date()
+@@ -590,6 +611,17 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         if let navigationController = navigationController {
+             FloatingChartButtonPlacement.place(chartNowButton, in: navigationController)
+         }
++        // Room to scroll the last chart up above the button, so it never sits on top of it.
++        setChartNowButtonInset(chartNowButton.bounds.height + 16)
++    }
++
++    /// Extra space at the bottom of the screen while the "Back to now" button shows.
++    private func setChartNowButtonInset(_ inset: CGFloat) {
++        guard tableView.contentInset.bottom != inset else {
++            return
++        }
++        tableView.contentInset.bottom = inset
++        tableView.verticalScrollIndicatorInsets.bottom = inset
+     }
+ 
+     override func createChartsManager() -> ChartsManager {
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index 7966134..a1da3cd 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -549,7 +549,7 @@ struct MealBreakdownFormulaGroupRows: View {
+             Stepper(value: $formula.mediumStarchPercent, in: 0...100, step: 5) {
+                 row(
+                     title: NSLocalizedString("Starches", comment: "Meal formula: percent of starches in an entry"),
+-                    detail: NSLocalizedString("Share of starches", comment: "Meal formula: starch percent explanation"),
++                    detail: NSLocalizedString("Starches = carbs − sugars − fiber", comment: "Meal formula: starch definition"),
+                     value: percent(formula.mediumStarchPercent)
+                 )
+             }
+@@ -642,12 +642,7 @@ struct MealBreakdownSettingsView: View {
+         List {
+             Section(header: Text("🍭 First Bolus · Now, over 30 min", comment: "Meal Breakdown settings: first bolus header")) {
+                 HStack {
+-                    VStack(alignment: .leading, spacing: 2) {
+-                        Text("Sugars", comment: "Meal Breakdown settings: first bolus row")
+-                        Text("Starches = carbs − sugars − fiber", comment: "Meal Breakdown settings: starch definition")
+-                            .font(.caption)
+-                            .foregroundColor(.secondary)
+-                    }
++                    Text("Sugars", comment: "Meal Breakdown settings: first bolus row")
+                     Spacer()
+                     Text("All", comment: "Meal Breakdown settings: all sugars go in the first bolus")
+                         .bold()
