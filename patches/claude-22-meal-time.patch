@@ -1,0 +1,89 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index c163eae..13dbfdc 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -437,6 +437,8 @@ enum MealBreakdownPreview {
+             // A one-meal change: 50% of starches medium, 6 min per gram of fat.
+             viewModel.mealFormula.mediumStarchPercent = 50
+             viewModel.mealFormula.delayedStarchPercent = 50
++            // Eating in 30 minutes: every part is timed from then.
++            viewModel.mealTime = Date().addingTimeInterval(.minutes(30))
+             viewModel.mealFormula.fatMinutesPerGram = 6
+         }
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewConfirm") {
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index 512b6b2..2a75191 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -190,6 +190,24 @@ final class CarbEntryViewModel: ObservableObject {
+     @Published var mealFiber: Double? = nil
+     @Published var mealProtein: Double? = nil
+     @Published var mealFat: Double? = nil
++    /// When the meal is eaten; every part is timed from here. Nil means now (at the moment of saving).
++    @Published var mealTime: Date? = nil
++
++    /// The meal time picker's limits: the same as Loop's own carb screen (12 h back, 1 h ahead).
++    var mealTimeRange: ClosedRange<Date> {
++        let now = Date()
++        return now.addingTimeInterval(LoopConstants.maxCarbEntryPastTime)...now.addingTimeInterval(LoopConstants.maxCarbEntryFutureTime)
++    }
++
++    /// The meal time to use, kept inside the allowed range.
++    func mealStart(now: Date) -> Date {
++        guard let mealTime = mealTime else {
++            return now
++        }
++        let range = now.addingTimeInterval(LoopConstants.maxCarbEntryPastTime)...now.addingTimeInterval(LoopConstants.maxCarbEntryFutureTime)
++        return min(max(mealTime, range.lowerBound), range.upperBound)
++    }
++
+     /// This meal's formula: starts from the saved default; changes here are for this meal only.
+     @Published var mealFormula: MealBreakdownFormula = .saved
+ 
+@@ -206,7 +224,7 @@ final class CarbEntryViewModel: ObservableObject {
+ 
+     func mealParts(now: Date = Date()) -> [MealBreakdown.Part] {
+         return mealBreakdown.parts(
+-            now: now,
++            now: mealStart(now: now),
+             fastAbsorption: defaultAbsorptionTimes.fast,
+             mediumAbsorption: defaultAbsorptionTimes.medium,
+             minimumAbsorption: minAbsorptionTime,
+@@ -228,8 +246,8 @@ final class CarbEntryViewModel: ObservableObject {
+         let now = Date()
+         let lines = mealParts(now: now).map { part -> String in
+             let grams = NumberFormatter.localizedString(from: NSNumber(value: part.grams), number: .none)
+-            let when = part.start > now.addingTimeInterval(.minutes(1))
+-                ? String(format: NSLocalizedString("starting %@", comment: "Meal breakdown: when a delayed carb entry starts (1: time)"), timeFormatter.string(from: part.start))
++            let when = abs(part.start.timeIntervalSince(now)) > .minutes(1)
++                ? String(format: NSLocalizedString("starting %@", comment: "Meal breakdown: when a carb entry starts (1: time)"), timeFormatter.string(from: part.start))
+                 : NSLocalizedString("now", comment: "Meal breakdown: carb entry starts now")
+             return "\(part.foodType): \(grams) g \(when), over \(MealBreakdown.durationText(part.absorptionTime))"
+         }
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index a1da3cd..a9e461e 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -252,6 +252,11 @@ extension CarbEntryView {
+ 
+     private var mealInputCard: some View {
+         VStack(spacing: 10) {
++            // When the meal is eaten: all three parts are timed from here.
++            let mealTimeFocused: Binding<Bool> = Binding(get: { expandedRow == .time }, set: { expandedRow = $0 ? .time : nil })
++            let mealTime: Binding<Date> = Binding(get: { viewModel.mealStart(now: Date()) }, set: { viewModel.mealTime = $0 })
++            DatePickerRow(date: mealTime, isFocused: mealTimeFocused, minimumDate: viewModel.mealTimeRange.lowerBound, maximumDate: viewModel.mealTimeRange.upperBound)
++            CardSectionDivider()
+             mealInputRow(NSLocalizedString("Carbs", comment: "Meal breakdown input: total carbohydrates"), value: $viewModel.mealCarbs)
+             CardSectionDivider()
+             mealInputRow(NSLocalizedString("Sugars", comment: "Meal breakdown input: sugars"), value: $viewModel.mealSugars)
+@@ -390,8 +395,8 @@ extension CarbEntryView {
+ 
+     private func mealPartTiming(_ part: MealBreakdown.Part, now: Date, timeFormatter: DateFormatter) -> String {
+         let duration = MealBreakdown.durationText(part.absorptionTime)
+-        if part.start > now.addingTimeInterval(.minutes(1)) {
+-            return String(format: NSLocalizedString("Starts %1$@, over %2$@", comment: "Meal breakdown timing for a delayed entry (1: start time, 2: duration)"), timeFormatter.string(from: part.start), duration)
++        if abs(part.start.timeIntervalSince(now)) > .minutes(1) {
++            return String(format: NSLocalizedString("Starts %1$@, over %2$@", comment: "Meal breakdown timing for an entry not starting now (1: start time, 2: duration)"), timeFormatter.string(from: part.start), duration)
+         }
+         return String(format: NSLocalizedString("Now, over %@", comment: "Meal breakdown timing for an entry starting now (1: duration)"), duration)
+     }

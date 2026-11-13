@@ -1,0 +1,936 @@
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 13dbfdc..c5cfa31 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+     static var isChartPreview: Bool {
+         #if DEBUG
+         let arguments = ProcessInfo.processInfo.arguments
+-        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview") || arguments.contains("-ClaudeLowReservoirPreview")
++        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview") || arguments.contains("-ClaudeLowReservoirPreview") || arguments.contains("-ClaudeMealHistoryPreview")
+         #else
+         return false
+         #endif
+@@ -53,6 +53,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         #if DEBUG
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
++        if ProcessInfo.processInfo.arguments.contains("-ClaudeMealHistoryPreview") {
++            // Meal history with two sample meals (written to the simulator's own folder).
++            let now = Date()
++            for (offset, bolus) in [(TimeInterval.hours(-2), 6.5), (TimeInterval.hours(-26), 0)] {
++                let breakdown = MealBreakdown(carbs: 115, sugars: 17, fiber: 6, protein: 44, fat: 36)
++                let meal = now.addingTimeInterval(offset)
++                let parts = breakdown.parts(now: meal, fastAbsorption: .minutes(30), mediumAbsorption: .hours(3), minimumAbsorption: .minutes(30), maximumAbsorption: .hours(8))
++                let record = MealBreakdownRecord(id: UUID(), savedAt: meal, mealTime: meal, breakdown: breakdown, entries: parts.map {
++                    MealBreakdownRecord.Entry(foodType: $0.foodType, grams: $0.grams, start: $0.start, absorptionTime: $0.absorptionTime)
++                })
++                MealBreakdownHistory.shared.add(record)
++                MealBreakdownHistory.shared.setBolus(bolus, for: record.id)
++            }
++            window?.rootViewController = UIHostingController(rootView: NavigationStack { MealBreakdownHistoryView() })
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeLowReservoirPreview") {
+             // Settings → Low Reservoir Alerts.
+             window?.rootViewController = UIHostingController(rootView: NavigationStack { LowReservoirAlertSettingsView() })
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index 477dc05..f3d9273 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -225,9 +225,6 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         onscreen = false
+ 
+         chartGestures.cancel()
+-        if chartNowButton.superview != nil {
+-            chartNowButton.isHidden = true
+-        }
+ 
+         if presentedViewController == nil {
+             navigationController?.setNavigationBarHidden(false, animated: animated)
+@@ -594,11 +591,16 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         updateChartNowButton()
+     }
+ 
++    /// The "Back to now" button sits in its own space right below the carbs chart (the table's
++    /// footer) while the charts are scrolled back, and scrolls with the screen instead of floating.
++    private lazy var chartNowFooter = ChartNowFooterView(button: chartNowButton)
++
+     private func updateChartNowButton() {
+         let window = chartGestures.window
+-        guard onscreen, !window.isLive else {
+-            chartNowButton.isHidden = true
+-            setChartNowButtonInset(0)
++        guard !window.isLive else {
++            if tableView.tableFooterView != nil {
++                tableView.tableFooterView = nil
++            }
+             return
+         }
+         let now = Date()
+@@ -607,21 +609,13 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         configuration.subtitle = Self.chartRangeText(from: window.start(now: now), to: window.end(now: now))
+         chartNowButton.configuration = configuration
+         chartNowButton.isHidden = false
+-        // Added only once it is needed, and placed by frame (no layout rules tied to the toolbar).
+-        if let navigationController = navigationController {
+-            FloatingChartButtonPlacement.place(chartNowButton, in: navigationController)
+-        }
+-        // Room to scroll the last chart up above the button, so it never sits on top of it.
+-        setChartNowButtonInset(chartNowButton.bounds.height + 16)
+-    }
+ 
+-    /// Extra space at the bottom of the screen while the "Back to now" button shows.
+-    private func setChartNowButtonInset(_ inset: CGFloat) {
+-        guard tableView.contentInset.bottom != inset else {
+-            return
++        let height = chartNowButton.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).height + 24
++        if tableView.tableFooterView !== chartNowFooter || chartNowFooter.frame.height != height || chartNowFooter.frame.width != tableView.bounds.width {
++            chartNowFooter.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: height)
++            tableView.tableFooterView = chartNowFooter
+         }
+-        tableView.contentInset.bottom = inset
+-        tableView.verticalScrollIndicatorInsets.bottom = inset
++        chartNowFooter.setNeedsLayout()
+     }
+ 
+     override func createChartsManager() -> ChartsManager {
+@@ -2658,3 +2652,31 @@ extension StatusTableViewController {
+         }
+     }
+ }
++
++
++/// Holds the "Back to now" button centered, placed by frame (no Auto Layout rules).
++private final class ChartNowFooterView: UIView {
++    private let button: UIButton
++
++    init(button: UIButton) {
++        self.button = button
++        super.init(frame: .zero)
++        button.translatesAutoresizingMaskIntoConstraints = true
++        addSubview(button)
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        let size = button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
++        button.frame = CGRect(
++            x: ((bounds.width - size.width) / 2).rounded(),
++            y: ((bounds.height - size.height) / 2).rounded(),
++            width: size.width,
++            height: size.height
++        )
++    }
++}
+diff --git a/Loop/Loop/View Models/BolusEntryViewModel.swift b/Loop/Loop/View Models/BolusEntryViewModel.swift
+index f68e1ff..fc90364 100644
+--- a/Loop/Loop/View Models/BolusEntryViewModel.swift	
++++ b/Loop/Loop/View Models/BolusEntryViewModel.swift	
+@@ -114,6 +114,8 @@ final class BolusEntryViewModel: ObservableObject {
+     let selectedCarbAbsorptionTimeEmoji: String?
+     /// Meal Breakdown entries saved just before this screen opened. Loop's recommendation already includes them.
+     let savedMealCarbEntries: [NewCarbEntry]
++    /// The Meal Breakdown history record to note this screen's bolus on.
++    let mealHistoryID: UUID?
+ 
+     @Published var recommendedBolus: HKQuantity?
+     var recommendedBolusAmount: Double? {
+@@ -174,7 +176,8 @@ final class BolusEntryViewModel: ObservableObject {
+         potentialCarbEntry: NewCarbEntry? = nil,
+         selectedCarbAbsorptionTimeEmoji: String? = nil,
+         isManualGlucoseEntryEnabled: Bool = false,
+-        savedMealCarbEntries: [NewCarbEntry] = []
++        savedMealCarbEntries: [NewCarbEntry] = [],
++        mealHistoryID: UUID? = nil
+     ) {
+         self.delegate = delegate
+         self.now = now
+@@ -192,6 +195,7 @@ final class BolusEntryViewModel: ObservableObject {
+         self.potentialCarbEntry = potentialCarbEntry
+         self.selectedCarbAbsorptionTimeEmoji = selectedCarbAbsorptionTimeEmoji
+         self.savedMealCarbEntries = savedMealCarbEntries
++        self.mealHistoryID = mealHistoryID
+         
+         self.isManualGlucoseEntryEnabled = isManualGlucoseEntryEnabled
+         
+@@ -429,6 +433,9 @@ final class BolusEntryViewModel: ObservableObject {
+                 self.analyticsServicesManager?.didBolus(source: "Phone")
+             })
+         }
++        if let mealHistoryID = mealHistoryID {
++            MealBreakdownHistory.shared.setBolus(amountToDeliver, for: mealHistoryID)
++        }
+         return true
+     }
+ 
+diff --git a/Loop/Loop/View Models/CarbEntryViewModel.swift b/Loop/Loop/View Models/CarbEntryViewModel.swift
+index 2a75191..dd3fa48 100644
+--- a/Loop/Loop/View Models/CarbEntryViewModel.swift	
++++ b/Loop/Loop/View Models/CarbEntryViewModel.swift	
+@@ -290,17 +290,27 @@ final class CarbEntryViewModel: ObservableObject {
+                     return
+                 }
+             }
+-            self.setMealBolusViewModel(savedEntries: entries)
++            // Kept in Meal Breakdown history (display only).
++            let record = MealBreakdownRecord(
++                id: UUID(),
++                savedAt: now,
++                mealTime: self.mealStart(now: now),
++                breakdown: self.mealBreakdown,
++                entries: entries.map { MealBreakdownRecord.Entry(foodType: $0.foodType ?? "", grams: $0.quantity.doubleValue(for: .gram()), start: $0.startDate, absorptionTime: $0.absorptionTime ?? 0) }
++            )
++            MealBreakdownHistory.shared.add(record)
++            self.setMealBolusViewModel(savedEntries: entries, historyID: record.id)
+         }
+     }
+ 
+     /// Loop's bolus screen for a meal whose entries are already saved: it lists them and offers
+     /// "Save without Bolusing" like a normal carb entry. Loop's recommendation already includes them.
+-    @MainActor private func setMealBolusViewModel(savedEntries: [NewCarbEntry]) {
++    @MainActor private func setMealBolusViewModel(savedEntries: [NewCarbEntry], historyID: UUID) {
+         let viewModel = BolusEntryViewModel(
+             delegate: delegate,
+             screenWidth: UIScreen.main.bounds.width,
+-            savedMealCarbEntries: savedEntries
++            savedMealCarbEntries: savedEntries,
++            mealHistoryID: historyID
+         )
+         Task {
+             await viewModel.generateRecommendationAndStartObserving()
+@@ -646,3 +656,111 @@ struct MealBreakdown: Equatable {
+         return String(format: NSLocalizedString("%.1f h", comment: "Duration in hours with one decimal (1: hours)"), hours)
+     }
+ }
++
++
++// MARK: - Meal Breakdown history (display only)
++
++/// One saved Meal Breakdown: what was typed in, the formula used, the entries saved, and the bolus.
++struct MealBreakdownRecord: Codable, Identifiable, Equatable {
++    struct Entry: Codable, Equatable {
++        let foodType: String
++        let grams: Double
++        let start: Date
++        let absorptionTime: TimeInterval
++    }
++
++    let id: UUID
++    let savedAt: Date
++    let mealTime: Date
++    let carbs: Double
++    let sugars: Double
++    let fiber: Double
++    let protein: Double
++    let fat: Double
++    let formula: MealBreakdownFormula
++    let entries: [Entry]
++    /// Units delivered from the Meal Bolus screen: 0 = saved without bolusing, nil = left without either.
++    var bolusUnits: Double?
++
++    init(id: UUID, savedAt: Date, mealTime: Date, breakdown: MealBreakdown, entries: [Entry]) {
++        self.id = id
++        self.savedAt = savedAt
++        self.mealTime = mealTime
++        self.carbs = breakdown.carbs
++        self.sugars = breakdown.sugars
++        self.fiber = breakdown.fiber
++        self.protein = breakdown.protein
++        self.fat = breakdown.fat
++        self.formula = breakdown.formula
++        self.entries = entries
++        self.bolusUnits = nil
++    }
++
++    var breakdown: MealBreakdown {
++        return MealBreakdown(carbs: carbs, sugars: sugars, fiber: fiber, protein: protein, fat: fat, formula: formula)
++    }
++
++    var totalGrams: Double {
++        return entries.reduce(0) { $0 + $1.grams }
++    }
++}
++
++/// Saved Meal Breakdowns, newest first, kept for a year in the app's own folder.
++final class MealBreakdownHistory: ObservableObject {
++    static let shared = MealBreakdownHistory()
++
++    @Published private(set) var records: [MealBreakdownRecord] = []
++
++    private let keepDuration: TimeInterval = .days(365)
++    private let maximumCount = 1000
++
++    private var fileURL: URL? {
++        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
++            return nil
++        }
++        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
++        return base.appendingPathComponent("MealBreakdownHistory.json")
++    }
++
++    init() {
++        if let url = fileURL, let data = try? Data(contentsOf: url),
++           let saved = try? JSONDecoder().decode([MealBreakdownRecord].self, from: data) {
++            records = saved
++        }
++    }
++
++    func add(_ record: MealBreakdownRecord) {
++        var updated = [record] + records.filter { $0.id != record.id }
++        let oldest = Date().addingTimeInterval(-keepDuration)
++        updated = Array(updated.filter { $0.savedAt >= oldest }.prefix(maximumCount))
++        save(updated)
++    }
++
++    func setBolus(_ units: Double, for id: UUID) {
++        guard let index = records.firstIndex(where: { $0.id == id }) else {
++            return
++        }
++        var updated = records
++        updated[index].bolusUnits = units
++        save(updated)
++    }
++
++    func delete(_ id: UUID) {
++        save(records.filter { $0.id != id })
++    }
++
++    private func save(_ updated: [MealBreakdownRecord]) {
++        let apply = {
++            self.records = updated
++        }
++        if Thread.isMainThread {
++            apply()
++        } else {
++            DispatchQueue.main.async(execute: apply)
++        }
++        guard let url = fileURL, let data = try? JSONEncoder().encode(updated) else {
++            return
++        }
++        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++    }
++}
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index a9e461e..01c95ed 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -21,6 +21,7 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+     
+     @State private var showHowAbsorptionTimeWorks = false
+     @State private var showAddFavoriteFood = false
++    @State private var showsMealFormula = false
+     
+     private let isNewEntry: Bool
+ 
+@@ -65,6 +66,7 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+             Color(.systemGroupedBackground)
+                 .edgesIgnoringSafeArea(.all)
+             
++            ScrollViewReader { scrollProxy in
+             ScrollView {
+                 if isNewEntry {
+                     entryModePicker
+@@ -73,12 +75,22 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+                 warningsCard
+ 
+                 if viewModel.entryMode == .mealBreakdown {
++                    HStack {
++                        Spacer()
++                        NavigationLink(destination: MealBreakdownHistoryView()) {
++                            Label(NSLocalizedString("History", comment: "Meal breakdown: link to past meal breakdowns"), systemImage: "clock.arrow.circlepath")
++                                .font(.subheadline)
++                        }
++                    }
++                    .padding(.horizontal)
++                    .padding(.top, 4)
+                     mealInputCard
+-                        .padding(.top, 8)
++                        .padding(.top, 4)
+                     mealFormulaCard
+                         .padding(.top, 8)
+                     mealResultCard
+                         .padding(.top, 8)
++                        .id("mealMath")
+                 } else {
+                     mainCard
+                         .padding(.top, 8)
+@@ -98,6 +110,17 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+                 .opacity(0)
+                 .accessibility(hidden: true)
+             }
++            .onAppear {
++                #if DEBUG
++                // Simulator screenshots of the Meal Breakdown math.
++                if ProcessInfo.processInfo.arguments.contains("-ClaudeMealPreviewScrollToMath") {
++                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
++                        scrollProxy.scrollTo("mealMath", anchor: .top)
++                    }
++                }
++                #endif
++            }
++            }
+         }
+         .alert(item: $viewModel.alert, content: alert(for:))
+         .sheet(isPresented: $showAddFavoriteFood, onDismiss: clearExpandedRow) {
+@@ -288,23 +311,40 @@ extension CarbEntryView {
+ 
+     private var mealFormulaCard: some View {
+         VStack(alignment: .leading, spacing: 10) {
+-            HStack {
+-                Text("FORMULA FOR THIS MEAL", comment: "Meal breakdown: title of the one-meal formula card")
+-                    .font(.footnote)
+-                    .foregroundColor(.secondary)
+-                Spacer()
+-                if viewModel.mealFormula != .saved {
+-                    Button(NSLocalizedString("Use Default", comment: "Meal breakdown: button to go back to the saved formula")) {
+-                        viewModel.mealFormula = .saved
++            // Folded away by default: tap to change the formula for this meal.
++            Button(action: { withAnimation { showsMealFormula.toggle() } }) {
++                HStack {
++                    Text("Formula for this meal", comment: "Meal breakdown: title of the one-meal formula card")
++                        .foregroundColor(.primary)
++                    Spacer()
++                    Text(viewModel.mealFormula == .saved
++                         ? NSLocalizedString("Default", comment: "Meal breakdown: the meal uses the saved formula")
++                         : NSLocalizedString("Changed", comment: "Meal breakdown: the meal's formula differs from the saved one"))
++                        .foregroundColor(viewModel.mealFormula == .saved ? .secondary : .accentColor)
++                    Image(systemName: "chevron.down")
++                        .font(.footnote.weight(.semibold))
++                        .foregroundColor(.secondary)
++                        .rotationEffect(.degrees(showsMealFormula ? 180 : 0))
++                }
++            }
++            .buttonStyle(.plain)
++
++            if showsMealFormula {
++                MealBreakdownFormulaRows(formula: $viewModel.mealFormula)
++                HStack(alignment: .firstTextBaseline) {
++                    Text("Changes here are for this meal only. Set the default in Settings → Meal Breakdown.", comment: "Meal breakdown: note under the one-meal formula card")
++                        .font(.caption)
++                        .foregroundColor(.secondary)
++                        .fixedSize(horizontal: false, vertical: true)
++                    Spacer()
++                    if viewModel.mealFormula != .saved {
++                        Button(NSLocalizedString("Use Default", comment: "Meal breakdown: button to go back to the saved formula")) {
++                            viewModel.mealFormula = .saved
++                        }
++                        .font(.footnote)
+                     }
+-                    .font(.footnote)
+                 }
+             }
+-            MealBreakdownFormulaRows(formula: $viewModel.mealFormula)
+-            Text("Changes here are for this meal only. Set the default in Settings → Meal Breakdown.", comment: "Meal breakdown: note under the one-meal formula card")
+-                .font(.caption)
+-                .foregroundColor(.secondary)
+-                .fixedSize(horizontal: false, vertical: true)
+         }
+         .padding(.vertical, 12)
+         .padding(.horizontal)
+@@ -312,101 +352,202 @@ extension CarbEntryView {
+         .padding(.horizontal)
+     }
+ 
++    // MARK: Meal Breakdown math (one card per bolus, like Trio's bolus calculator details)
++
+     private var mealResultCard: some View {
+         let breakdown = viewModel.mealBreakdown
++        let formula = breakdown.formula
+         let now = Date()
+         let parts = viewModel.mealParts(now: now)
+-        let timeFormatter: DateFormatter = {
+-            let formatter = DateFormatter()
+-            formatter.dateStyle = .none
+-            formatter.timeStyle = .short
+-            return formatter
+-        }()
+-        func grams(_ value: Double) -> String {
+-            return NumberFormatter.localizedString(from: NSNumber(value: value.rounded()), number: .none) + " g"
+-        }
+-
+-        return VStack(alignment: .leading, spacing: 10) {
+-            Text("BREAKDOWN", comment: "Meal breakdown result section title")
+-                .font(.footnote)
+-                .foregroundColor(.secondary)
++        let first = parts.first { $0.emoji == "🍭" }
++        let second = parts.first { $0.emoji == "🌮" }
++        let third = parts.first { $0.emoji == "🍕" }
+ 
+-            HStack {
+-                Text("Starches", comment: "Meal breakdown: starches row")
+-                Spacer()
+-                Text("\(grams(breakdown.carbs)) − \(grams(breakdown.sugars)) − \(grams(breakdown.fiber)) = \(grams(breakdown.starches))")
+-                    .foregroundColor(.secondary)
+-                    .minimumScaleFactor(0.7)
+-                    .lineLimit(1)
+-            }
++        return VStack(alignment: .leading, spacing: 6) {
++            if parts.isEmpty {
++                mealMathCard(title: NSLocalizedString("Breakdown", comment: "Meal breakdown result section title")) {
++                    Text("Enter the meal's carbs to see the breakdown.", comment: "Meal breakdown placeholder")
++                        .foregroundColor(.secondary)
++                }
++            } else {
++                mealMathCard(title: NSLocalizedString("Starches", comment: "Meal breakdown: starches card title")) {
++                    mealEquation(result: breakdown.starches) {
++                        MealMathTerm(label: NSLocalizedString("Carbs", comment: "Meal math label"), value: breakdown.carbs, unit: "g")
++                        MealMathOperator("−")
++                        MealMathTerm(label: NSLocalizedString("Sugars", comment: "Meal math label"), value: breakdown.sugars, unit: "g")
++                        MealMathOperator("−")
++                        MealMathTerm(label: NSLocalizedString("Fiber", comment: "Meal math label"), value: breakdown.fiber, unit: "g")
++                    }
++                }
+ 
+-            CardSectionDivider()
++                if let first = first {
++                    mealMathCard(title: mealBolusTitle(first, number: NSLocalizedString("First Bolus", comment: "Meal breakdown: first bolus"), now: now)) {
++                        mealEquation(result: first.grams) {
++                            MealMathTerm(label: NSLocalizedString("Sugars", comment: "Meal math label"), value: breakdown.sugars, unit: "g")
++                            MealMathOperator("×")
++                            MealMathTerm(label: nil, value: 100, unit: "%")
++                        }
++                    }
++                }
+ 
+-            if parts.isEmpty {
+-                Text("Enter the meal's carbs to see the breakdown.", comment: "Meal breakdown placeholder")
+-                    .foregroundColor(.secondary)
+-            }
++                if let second = second {
++                    mealMathCard(title: mealBolusTitle(second, number: NSLocalizedString("Second Bolus", comment: "Meal breakdown: second bolus"), now: now)) {
++                        mealEquation(result: breakdown.mediumGrams) {
++                            MealMathTerm(label: NSLocalizedString("Starches", comment: "Meal math label"), value: breakdown.starches, unit: "g")
++                            MealMathOperator("×")
++                            MealMathTerm(label: nil, value: formula.mediumStarchPercent, unit: "%")
++                        }
++                        if !breakdown.hasDelayedPart {
++                            // Delay of 3 h or less: the 🍕 share is added here instead.
++                            CardSectionDivider()
++                            mealEquation(result: formula.delayedStarchPercent / 100 * breakdown.starches, prefix: "+") {
++                                MealMathTerm(label: NSLocalizedString("Starches", comment: "Meal math label"), value: breakdown.starches, unit: "g")
++                                MealMathOperator("×")
++                                MealMathTerm(label: nil, value: formula.delayedStarchPercent, unit: "%")
++                            }
++                            mealEquation(result: formula.proteinPercent / 100 * max(0, breakdown.protein), prefix: "+") {
++                                MealMathTerm(label: NSLocalizedString("Protein", comment: "Meal math label"), value: breakdown.protein, unit: "g")
++                                MealMathOperator("×")
++                                MealMathTerm(label: nil, value: formula.proteinPercent, unit: "%")
++                            }
++                            mealTotalRow(second.grams, note: NSLocalizedString("Delay is 3 h or less, so the 🍕 share is in this bolus.", comment: "Meal breakdown: delayed part merged into the second bolus"))
++                        }
++                    }
++                }
+ 
+-            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+-                HStack(alignment: .firstTextBaseline) {
+-                    Text(part.emoji)
+-                    VStack(alignment: .leading, spacing: 2) {
+-                        Text(mealPartTitle(part.emoji))
+-                        Text(mealPartTiming(part, now: now, timeFormatter: timeFormatter))
+-                            .font(.caption)
+-                            .foregroundColor(.secondary)
++                if let third = third {
++                    mealMathCard(title: mealBolusTitle(third, number: NSLocalizedString("Third Bolus", comment: "Meal breakdown: third bolus"), now: now)) {
++                        mealEquation(result: formula.delayedStarchPercent / 100 * breakdown.starches) {
++                            MealMathTerm(label: NSLocalizedString("Starches", comment: "Meal math label"), value: breakdown.starches, unit: "g")
++                            MealMathOperator("×")
++                            MealMathTerm(label: nil, value: formula.delayedStarchPercent, unit: "%")
++                        }
++                        mealEquation(result: formula.proteinPercent / 100 * max(0, breakdown.protein), prefix: "+") {
++                            MealMathTerm(label: NSLocalizedString("Protein", comment: "Meal math label"), value: breakdown.protein, unit: "g")
++                            MealMathOperator("×")
++                            MealMathTerm(label: nil, value: formula.proteinPercent, unit: "%")
++                        }
++                        mealTotalRow(third.grams, note: nil)
+                     }
+-                    Spacer()
+-                    Text(grams(part.grams))
+-                        .bold()
+                 }
+-            }
+ 
+-            if !parts.isEmpty {
+-                CardSectionDivider()
+-                HStack {
+-                    Text("Total", comment: "Meal breakdown total row")
+-                    Spacer()
+-                    Text(grams(parts.reduce(0) { $0 + $1.grams }))
+-                        .bold()
++                mealMathCard(title: NSLocalizedString("⏱ Delay Time", comment: "Meal breakdown: delay card title")) {
++                    mealEquation(result: max(0, breakdown.protein) * formula.proteinMinutesPerGram, unit: "min") {
++                        MealMathTerm(label: NSLocalizedString("Protein", comment: "Meal math label"), value: breakdown.protein, unit: "g")
++                        MealMathOperator("×")
++                        MealMathTerm(label: nil, value: formula.proteinMinutesPerGram, unit: NSLocalizedString("min/g", comment: "Meal math unit: minutes per gram"))
++                    }
++                    mealEquation(result: max(0, breakdown.fat) * formula.fatMinutesPerGram, unit: "min", prefix: "+") {
++                        MealMathTerm(label: NSLocalizedString("Fat", comment: "Meal math label"), value: breakdown.fat, unit: "g")
++                        MealMathOperator("×")
++                        MealMathTerm(label: nil, value: formula.fatMinutesPerGram, unit: NSLocalizedString("min/g", comment: "Meal math unit: minutes per gram"))
++                    }
++                    CardSectionDivider()
++                    HStack {
++                        Text("Delay", comment: "Meal breakdown: total delay row")
++                        Spacer()
++                        Text(MealBreakdown.durationText(breakdown.delay))
++                            .bold()
++                    }
++                    Text(mealDelayNote(breakdown, third: third))
++                        .font(.caption)
++                        .foregroundColor(.secondary)
++                        .fixedSize(horizontal: false, vertical: true)
++                }
++
++                mealMathCard(title: nil) {
++                    HStack {
++                        Text("Total carbs entered", comment: "Meal breakdown total row")
++                            .bold()
++                        Spacer()
++                        Text(mealGramsText(parts.reduce(0) { $0 + $1.grams }))
++                            .font(.title3.bold())
++                            .foregroundColor(Color(.carbTintColor))
++                    }
++                    Text("Saved as separate carb entries; Loop's dosing math is unchanged.", comment: "Meal breakdown footer")
++                        .font(.caption)
++                        .foregroundColor(.secondary)
+                 }
+-                Text(mealDelayNote(breakdown))
+-                    .font(.caption)
+-                    .foregroundColor(.secondary)
+-                    .fixedSize(horizontal: false, vertical: true)
+             }
+         }
+-        .padding(.vertical, 12)
+-        .padding(.horizontal)
+-        .background(CardBackground())
+         .padding(.horizontal)
+     }
+ 
+-    private func mealPartTitle(_ emoji: String) -> String {
+-        switch emoji {
+-        case "🍭":
+-            return NSLocalizedString("Now (sugars)", comment: "Meal breakdown: fast part")
+-        case "🍕":
+-            return NSLocalizedString("Delayed (starches and protein)", comment: "Meal breakdown: delayed part")
+-        default:
+-            return NSLocalizedString("Medium (starches)", comment: "Meal breakdown: medium part")
++    private func mealMathCard<Content: View>(title: String?, @ViewBuilder content: () -> Content) -> some View {
++        VStack(alignment: .leading, spacing: 6) {
++            if let title = title {
++                Text(title)
++                    .font(.subheadline.weight(.semibold))
++                    .foregroundColor(.secondary)
++                    .padding(.horizontal, 4)
++                    .padding(.top, 8)
++            }
++            VStack(alignment: .leading, spacing: 8) {
++                content()
++            }
++            .padding(.vertical, 12)
++            .padding(.horizontal)
++            .frame(maxWidth: .infinity, alignment: .leading)
++            .background(CardBackground())
++        }
++    }
++
++    /// Terms on the left, "= result" on the right.
++    private func mealEquation<Terms: View>(result: Double, unit: String = "g", prefix: String? = nil, @ViewBuilder terms: () -> Terms) -> some View {
++        HStack(alignment: .center, spacing: 8) {
++            if let prefix = prefix {
++                MealMathOperator(prefix)
++            }
++            terms()
++            Spacer(minLength: 4)
++            MealMathOperator("=")
++            MealMathTerm(label: nil, value: result, unit: unit, color: Color(.carbTintColor))
+         }
+     }
+ 
+-    private func mealPartTiming(_ part: MealBreakdown.Part, now: Date, timeFormatter: DateFormatter) -> String {
+-        let duration = MealBreakdown.durationText(part.absorptionTime)
+-        if abs(part.start.timeIntervalSince(now)) > .minutes(1) {
+-            return String(format: NSLocalizedString("Starts %1$@, over %2$@", comment: "Meal breakdown timing for an entry not starting now (1: start time, 2: duration)"), timeFormatter.string(from: part.start), duration)
++    private func mealTotalRow(_ grams: Double, note: String?) -> some View {
++        VStack(alignment: .leading, spacing: 4) {
++            CardSectionDivider()
++            HStack {
++                Text("Entry", comment: "Meal breakdown: the carb entry this bolus saves")
++                Spacer()
++                Text(mealGramsText(grams))
++                    .bold()
++                    .foregroundColor(Color(.carbTintColor))
++            }
++            if let note = note {
++                Text(note)
++                    .font(.caption)
++                    .foregroundColor(.secondary)
++            }
+         }
+-        return String(format: NSLocalizedString("Now, over %@", comment: "Meal breakdown timing for an entry starting now (1: duration)"), duration)
+     }
+ 
+-    private func mealDelayNote(_ breakdown: MealBreakdown) -> String {
+-        let delay = MealBreakdown.durationText(breakdown.delay)
+-        if breakdown.hasDelayedPart {
+-            return String(format: NSLocalizedString("Delay %@ from protein and fat, so the delayed part runs from 3 h after the meal to the end of the delay. Saved as separate carb entries; Loop's dosing math is unchanged.", comment: "Meal breakdown note with a delayed part (1: delay)"), delay)
++    private func mealGramsText(_ grams: Double) -> String {
++        return NumberFormatter.localizedString(from: NSNumber(value: grams.rounded()), number: .none) + " g"
++    }
++
++    /// "🌮 Second Bolus · 6:30 PM, over 3 h"
++    private func mealBolusTitle(_ part: MealBreakdown.Part, number: String, now: Date) -> String {
++        let timeFormatter = DateFormatter()
++        timeFormatter.dateStyle = .none
++        timeFormatter.timeStyle = .short
++        let when = abs(part.start.timeIntervalSince(now)) > .minutes(1)
++            ? timeFormatter.string(from: part.start)
++            : NSLocalizedString("Now", comment: "Meal breakdown: bolus starts now")
++        return "\(part.emoji) \(number) · \(when), " + String(format: NSLocalizedString("over %@", comment: "Meal breakdown: absorption duration (1: duration)"), MealBreakdown.durationText(part.absorptionTime))
++    }
++
++    private func mealDelayNote(_ breakdown: MealBreakdown, third: MealBreakdown.Part?) -> String {
++        if let third = third {
++            let runs = MealBreakdown.durationText(third.absorptionTime)
++            let raw = breakdown.delay - MealBreakdown.delayedStart
++            if abs(raw - third.absorptionTime) > .minutes(1) {
++                return String(format: NSLocalizedString("🍕 starts 3 h after the meal and runs %1$@ (the delay minus 3 h, kept within Loop's %2$@ to %3$@ limits).", comment: "Meal breakdown: delay note when the duration was limited (1: duration, 2: min, 3: max)"), runs, MealBreakdown.durationText(viewModel.minAbsorptionTime), MealBreakdown.durationText(viewModel.maxAbsorptionTime))
++            }
++            return String(format: NSLocalizedString("🍕 starts 3 h after the meal and runs %@ (the delay minus 3 h).", comment: "Meal breakdown: delay note (1: duration)"), runs)
+         }
+-        return String(format: NSLocalizedString("Delay %@ is 3 h or less, so the delayed part is included in the medium entry. Saved as separate carb entries; Loop's dosing math is unchanged.", comment: "Meal breakdown note without a delayed part (1: delay)"), delay)
++        return NSLocalizedString("3 h or less, so there's no third bolus; its share is in the second bolus.", comment: "Meal breakdown: delay note without a third bolus")
+     }
+ }
+ 
+@@ -645,6 +786,11 @@ struct MealBreakdownSettingsView: View {
+ 
+     var body: some View {
+         List {
++            Section {
++                NavigationLink(destination: MealBreakdownHistoryView()) {
++                    Label(NSLocalizedString("Meal Breakdown History", comment: "Meal Breakdown settings: link to past meal breakdowns"), systemImage: "clock.arrow.circlepath")
++                }
++            }
+             Section(header: Text("🍭 First Bolus · Now, over 30 min", comment: "Meal Breakdown settings: first bolus header")) {
+                 HStack {
+                     Text("Sugars", comment: "Meal Breakdown settings: first bolus row")
+@@ -677,3 +823,213 @@ struct MealBreakdownSettingsView: View {
+         }
+     }
+ }
++
++
++/// One number in a Meal Breakdown equation: small label above, value, unit below (Trio's style).
++private struct MealMathTerm: View {
++    let label: String?
++    let value: Double
++    let unit: String
++    var color: Color = .primary
++
++    var body: some View {
++        VStack(spacing: 1) {
++            Text(label ?? " ")
++                .font(.caption2)
++                .foregroundColor(.secondary)
++            Text(Self.format(value))
++                .font(.headline)
++                .monospacedDigit()
++                .foregroundColor(color)
++            Text(unit)
++                .font(.caption2)
++                .foregroundColor(.secondary)
++        }
++        .lineLimit(1)
++        .minimumScaleFactor(0.7)
++    }
++
++    static func format(_ value: Double) -> String {
++        let formatter = NumberFormatter()
++        formatter.minimumFractionDigits = 0
++        formatter.maximumFractionDigits = abs(value - value.rounded()) < 0.05 || abs(value) >= 10 ? 0 : 1
++        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
++    }
++}
++
++/// An operator between Meal Breakdown terms.
++private struct MealMathOperator: View {
++    let symbol: String
++
++    init(_ symbol: String) {
++        self.symbol = symbol
++    }
++
++    var body: some View {
++        Text(symbol)
++            .font(.headline)
++            .foregroundColor(.secondary)
++    }
++}
++
++
++// MARK: - Meal Breakdown history
++
++/// Every saved Meal Breakdown, newest first: what was entered, the formula, the entries, and the bolus.
++struct MealBreakdownHistoryView: View {
++    @ObservedObject private var history = MealBreakdownHistory.shared
++
++    var body: some View {
++        List {
++            if history.records.isEmpty {
++                Text("No meal breakdowns yet. Each one you save shows up here.", comment: "Meal breakdown history: empty")
++                    .foregroundColor(.secondary)
++            }
++            ForEach(days, id: \.self) { day in
++                Section(header: Text(Self.dayFormatter.string(from: day))) {
++                    ForEach(history.records.filter { Calendar.current.isDate($0.mealTime, inSameDayAs: day) }) { record in
++                        NavigationLink(destination: MealBreakdownRecordView(record: record)) {
++                            MealBreakdownHistoryRow(record: record)
++                        }
++                    }
++                    .onDelete { offsets in
++                        let records = history.records.filter { Calendar.current.isDate($0.mealTime, inSameDayAs: day) }
++                        offsets.map { records[$0].id }.forEach { history.delete($0) }
++                    }
++                }
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(NSLocalizedString("Meal History", comment: "Meal breakdown history title"))
++    }
++
++    private var days: [Date] {
++        var seen = Set<Date>()
++        return history.records.compactMap { record in
++            let day = Calendar.current.startOfDay(for: record.mealTime)
++            return seen.insert(day).inserted ? day : nil
++        }
++    }
++
++    static let dayFormatter: DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.setLocalizedDateFormatFromTemplate("EEEEMMMd")
++        return formatter
++    }()
++
++    static let timeFormatter: DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.dateStyle = .none
++        formatter.timeStyle = .short
++        return formatter
++    }()
++
++    static func grams(_ value: Double) -> String {
++        return NumberFormatter.localizedString(from: NSNumber(value: value.rounded()), number: .none) + " g"
++    }
++
++    static func bolusText(_ record: MealBreakdownRecord) -> String {
++        guard let units = record.bolusUnits else {
++            return NSLocalizedString("No bolus recorded", comment: "Meal breakdown history: left the bolus screen without either option")
++        }
++        if units <= 0 {
++            return NSLocalizedString("Saved without bolusing", comment: "Meal breakdown history: no bolus")
++        }
++        let formatter = NumberFormatter()
++        formatter.minimumFractionDigits = 0
++        formatter.maximumFractionDigits = 2
++        return String(format: NSLocalizedString("Bolused %@ U", comment: "Meal breakdown history: bolus amount (1: units)"), formatter.string(from: NSNumber(value: units)) ?? "\(units)")
++    }
++}
++
++private struct MealBreakdownHistoryRow: View {
++    let record: MealBreakdownRecord
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 3) {
++            HStack {
++                Text(MealBreakdownHistoryView.timeFormatter.string(from: record.mealTime))
++                    .bold()
++                Spacer()
++                Text(MealBreakdownHistoryView.grams(record.totalGrams))
++                    .bold()
++                    .foregroundColor(Color(.carbTintColor))
++            }
++            Text(record.entries.map { "\($0.foodType.split(separator: " ").first.map(String.init) ?? "") \(MealBreakdownHistoryView.grams($0.grams))" }.joined(separator: " · "))
++                .font(.subheadline)
++            Text(MealBreakdownHistoryView.bolusText(record))
++                .font(.caption)
++                .foregroundColor(.secondary)
++        }
++        .padding(.vertical, 2)
++    }
++}
++
++/// One saved meal: inputs, formula used, entries saved, and the bolus.
++private struct MealBreakdownRecordView: View {
++    let record: MealBreakdownRecord
++
++    var body: some View {
++        let breakdown = record.breakdown
++        let formula = record.formula
++        List {
++            Section(header: Text("Meal", comment: "Meal breakdown history detail: inputs section")) {
++                row(NSLocalizedString("Meal time", comment: "Meal breakdown history detail"), MealBreakdownHistoryView.timeFormatter.string(from: record.mealTime))
++                row(NSLocalizedString("Carbs", comment: "Meal breakdown input: total carbohydrates"), MealBreakdownHistoryView.grams(record.carbs))
++                row(NSLocalizedString("Sugars", comment: "Meal breakdown input: sugars"), MealBreakdownHistoryView.grams(record.sugars))
++                row(NSLocalizedString("Fiber", comment: "Meal breakdown input: fiber"), MealBreakdownHistoryView.grams(record.fiber))
++                row(NSLocalizedString("Protein", comment: "Meal breakdown input: protein"), MealBreakdownHistoryView.grams(record.protein))
++                row(NSLocalizedString("Fat", comment: "Meal breakdown input: fat"), MealBreakdownHistoryView.grams(record.fat))
++                row(NSLocalizedString("Starches", comment: "Meal breakdown: starches row"), MealBreakdownHistoryView.grams(breakdown.starches))
++            }
++            Section(header: Text("Entries Saved", comment: "Meal breakdown history detail: entries section")) {
++                ForEach(Array(record.entries.enumerated()), id: \.offset) { _, entry in
++                    HStack {
++                        VStack(alignment: .leading, spacing: 2) {
++                            Text(entry.foodType)
++                            Text(String(format: NSLocalizedString("%1$@, over %2$@", comment: "Meal breakdown history: entry start and duration (1: time, 2: duration)"), MealBreakdownHistoryView.timeFormatter.string(from: entry.start), MealBreakdown.durationText(entry.absorptionTime)))
++                                .font(.caption)
++                                .foregroundColor(.secondary)
++                        }
++                        Spacer()
++                        Text(MealBreakdownHistoryView.grams(entry.grams))
++                            .bold()
++                            .foregroundColor(Color(.carbTintColor))
++                    }
++                }
++                row(NSLocalizedString("Total", comment: "Meal breakdown total row"), MealBreakdownHistoryView.grams(record.totalGrams))
++                row(NSLocalizedString("Bolus", comment: "Meal breakdown history detail: bolus row"), MealBreakdownHistoryView.bolusText(record))
++            }
++            Section(header: Text("Formula Used", comment: "Meal breakdown history detail: formula section")) {
++                row(NSLocalizedString("🌮 Starches", comment: "Meal breakdown history: medium starch percent"), percent(formula.mediumStarchPercent))
++                row(NSLocalizedString("🍕 Starches", comment: "Meal breakdown history: delayed starch percent"), percent(formula.delayedStarchPercent))
++                row(NSLocalizedString("🍕 Protein", comment: "Meal breakdown history: protein percent"), percent(formula.proteinPercent))
++                row(NSLocalizedString("Protein delay", comment: "Meal breakdown history: protein minutes per gram"), minutes(formula.proteinMinutesPerGram))
++                row(NSLocalizedString("Fat delay", comment: "Meal breakdown history: fat minutes per gram"), minutes(formula.fatMinutesPerGram))
++                row(NSLocalizedString("Delay", comment: "Meal breakdown: total delay row"), MealBreakdown.durationText(breakdown.delay))
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(MealBreakdownHistoryView.dayFormatter.string(from: record.mealTime))
++    }
++
++    private func row(_ title: String, _ value: String) -> some View {
++        HStack {
++            Text(title)
++            Spacer()
++            Text(value)
++                .foregroundColor(.secondary)
++        }
++    }
++
++    private func percent(_ value: Double) -> String {
++        return NumberFormatter.localizedString(from: NSNumber(value: value.rounded()), number: .none) + "%"
++    }
++
++    private func minutes(_ value: Double) -> String {
++        let formatter = NumberFormatter()
++        formatter.minimumFractionDigits = 0
++        formatter.maximumFractionDigits = 1
++        return String(format: NSLocalizedString("%@ min/g", comment: "Meal breakdown history: minutes per gram (1: number)"), formatter.string(from: NSNumber(value: value)) ?? "\(value)")
++    }
++}
