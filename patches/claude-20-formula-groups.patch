@@ -1,0 +1,158 @@
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index e17a1a6..7966134 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -519,47 +519,66 @@ extension CarbEntryView {
+ 
+ // MARK: - Meal Breakdown formula (shared by the carb screen and Settings)
+ 
+-/// Steppers for the four adjustable numbers in the meal formula.
+-struct MealBreakdownFormulaRows: View {
++/// The adjustable parts of the meal formula, in the order the boluses happen.
++/// (🍭 the first, sugars, has nothing to set.)
++enum MealFormulaGroup: CaseIterable {
++    case second
++    case third
++    case delay
++
++    var title: String {
++        switch self {
++        case .second:
++            return NSLocalizedString("🌮 Second Bolus · Now, over 3 h", comment: "Meal formula group: the medium entry")
++        case .third:
++            return NSLocalizedString("🍕 Third Bolus · Delayed, starts 3 h later", comment: "Meal formula group: the delayed entry")
++        case .delay:
++            return NSLocalizedString("⏱ Delay Time · when 🍕 ends", comment: "Meal formula group: protein and fat delay")
++        }
++    }
++}
++
++/// The steppers for one group of the meal formula.
++struct MealBreakdownFormulaGroupRows: View {
+     @Binding var formula: MealBreakdownFormula
++    let group: MealFormulaGroup
+ 
+     var body: some View {
+-        VStack(spacing: 10) {
++        switch group {
++        case .second:
+             Stepper(value: $formula.mediumStarchPercent, in: 0...100, step: 5) {
+                 row(
+-                    title: NSLocalizedString("🌮 Starches in medium", comment: "Meal formula: percent of starches in the medium entry"),
+-                    detail: NSLocalizedString("Now, over 3 h", comment: "Meal formula: when the medium entry runs"),
++                    title: NSLocalizedString("Starches", comment: "Meal formula: percent of starches in an entry"),
++                    detail: NSLocalizedString("Share of starches", comment: "Meal formula: starch percent explanation"),
+                     value: percent(formula.mediumStarchPercent)
+                 )
+             }
+-            CardSectionDivider()
++        case .third:
+             Stepper(value: $formula.delayedStarchPercent, in: 0...100, step: 5) {
+                 row(
+-                    title: NSLocalizedString("🍕 Starches in delayed", comment: "Meal formula: percent of starches in the delayed entry"),
+-                    detail: String(format: NSLocalizedString("Starts 3 h later · 🌮 + 🍕 = %@", comment: "Meal formula: when the delayed entry starts, and the two starch shares added up (1: percent)"), percent(formula.mediumStarchPercent + formula.delayedStarchPercent)),
++                    title: NSLocalizedString("Starches", comment: "Meal formula: percent of starches in an entry"),
++                    detail: String(format: NSLocalizedString("🌮 + 🍕 = %@ of starches", comment: "Meal formula: the two starch shares added up (1: percent)"), percent(formula.mediumStarchPercent + formula.delayedStarchPercent)),
+                     value: percent(formula.delayedStarchPercent)
+                 )
+             }
+-            CardSectionDivider()
+             Stepper(value: $formula.proteinPercent, in: 0...100, step: 5) {
+                 row(
+-                    title: NSLocalizedString("🍕 Protein added", comment: "Meal formula: percent of protein grams added to the delayed entry"),
++                    title: NSLocalizedString("Protein", comment: "Meal formula: percent of protein grams added to the delayed entry"),
+                     detail: NSLocalizedString("Of protein grams, as carbs", comment: "Meal formula: protein percent explanation"),
+                     value: percent(formula.proteinPercent)
+                 )
+             }
+-            CardSectionDivider()
++        case .delay:
+             Stepper(value: $formula.proteinMinutesPerGram, in: 0...30, step: 0.5) {
+                 row(
+-                    title: NSLocalizedString("Protein delay", comment: "Meal formula: minutes of delay per gram of protein"),
++                    title: NSLocalizedString("Protein", comment: "Meal formula: minutes of delay per gram of protein"),
+                     detail: NSLocalizedString("Minutes per gram", comment: "Meal formula: delay unit explanation"),
+                     value: minutes(formula.proteinMinutesPerGram)
+                 )
+             }
+-            CardSectionDivider()
+             Stepper(value: $formula.fatMinutesPerGram, in: 0...30, step: 0.5) {
+                 row(
+-                    title: NSLocalizedString("Fat delay", comment: "Meal formula: minutes of delay per gram of fat"),
++                    title: NSLocalizedString("Fat", comment: "Meal formula: minutes of delay per gram of fat"),
+                     detail: NSLocalizedString("Minutes per gram", comment: "Meal formula: delay unit explanation"),
+                     value: minutes(formula.fatMinutesPerGram)
+                 )
+@@ -595,15 +614,54 @@ struct MealBreakdownFormulaRows: View {
+     }
+ }
+ 
++/// All groups in one card (the carb entry screen), each with its own title.
++struct MealBreakdownFormulaRows: View {
++    @Binding var formula: MealBreakdownFormula
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 10) {
++            ForEach(Array(MealFormulaGroup.allCases.enumerated()), id: \.offset) { index, group in
++                if index > 0 {
++                    CardSectionDivider()
++                }
++                Text(group.title)
++                    .font(.footnote.weight(.semibold))
++                    .foregroundColor(.secondary)
++                    .padding(.top, index > 0 ? 4 : 0)
++                MealBreakdownFormulaGroupRows(formula: $formula, group: group)
++            }
++        }
++    }
++}
++
+ /// Settings → Meal Breakdown: the default formula used for each new meal.
+ struct MealBreakdownSettingsView: View {
+     @State private var formula: MealBreakdownFormula = .saved
+ 
+     var body: some View {
+         List {
+-            Section(footer: Text("Each Meal Breakdown starts from these numbers. You can change them for a single meal on the carb entry screen.\n\nStarches = carbs − sugars − fiber. 🍭 sugars now; 🌮 the medium share of starches now, over 3 h; 🍕 the delayed share of starches plus the protein share, starting 3 h after the meal and running until the protein and fat delay ends. These are ordinary carb entries; Loop's dosing math is unchanged.", comment: "Meal Breakdown settings footer")) {
+-                MealBreakdownFormulaRows(formula: $formula)
+-                    .padding(.vertical, 4)
++            Section(header: Text("🍭 First Bolus · Now, over 30 min", comment: "Meal Breakdown settings: first bolus header")) {
++                HStack {
++                    VStack(alignment: .leading, spacing: 2) {
++                        Text("Sugars", comment: "Meal Breakdown settings: first bolus row")
++                        Text("Starches = carbs − sugars − fiber", comment: "Meal Breakdown settings: starch definition")
++                            .font(.caption)
++                            .foregroundColor(.secondary)
++                    }
++                    Spacer()
++                    Text("All", comment: "Meal Breakdown settings: all sugars go in the first bolus")
++                        .bold()
++                }
++            }
++            Section(header: Text(MealFormulaGroup.second.title)) {
++                MealBreakdownFormulaGroupRows(formula: $formula, group: .second)
++            }
++            Section(header: Text(MealFormulaGroup.third.title)) {
++                MealBreakdownFormulaGroupRows(formula: $formula, group: .third)
++            }
++            Section(header: Text(MealFormulaGroup.delay.title),
++                    footer: Text("Each Meal Breakdown starts from these numbers; you can change them for a single meal on the carb entry screen. These are ordinary carb entries; Loop's dosing math is unchanged.", comment: "Meal Breakdown settings footer")) {
++                MealBreakdownFormulaGroupRows(formula: $formula, group: .delay)
+             }
+             Section {
+                 Button(NSLocalizedString("Reset to Defaults (60%, 40%, 50%, 4 min, 8 min)", comment: "Meal Breakdown settings: reset button")) {
+diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
+index 06e0572..9c71d3a 100644
+--- a/Loop/Loop/Views/SettingsView.swift
++++ b/Loop/Loop/Views/SettingsView.swift
+@@ -722,8 +722,8 @@ struct LowReservoirAlertSettingsView: View {
+ 
+     var body: some View {
+         List {
+-            Section(footer: Text("The first low reservoir alert always comes through. After that it repeats at most this often. \"Reservoir empty\" and every other alert are not affected, and the pump's own beeps are unchanged.", comment: "Low Reservoir Alerts settings footer")) {
+-                Picker(NSLocalizedString("Repeat at most every", comment: "Low Reservoir Alerts: picker title"), selection: $interval) {
++            Section(footer: Text("The first low reservoir alert always comes through. After that, it repeats no more often than this. \"Reservoir empty\" and every other alert are not affected, and the pump's own beeps are unchanged.", comment: "Low Reservoir Alerts settings footer")) {
++                Picker(NSLocalizedString("Repeat every", comment: "Low Reservoir Alerts: picker title"), selection: $interval) {
+                     ForEach(LowReservoirAlertThrottle.intervalChoices, id: \.self) { choice in
+                         Text(LowReservoirAlertThrottle.intervalText(choice)).tag(choice)
+                     }
