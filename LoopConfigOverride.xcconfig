@@ -4,7 +4,7 @@
 // MAIN_APP_BUNDLE_IDENTIFIER = com.myname.loop
 
 // One-line name shown on the phone. Change only this line to rename the app.
-MAIN_APP_DISPLAY_NAME = Loop Custom
+MAIN_APP_DISPLAY_NAME = Glidepath
 
 // Link scheme without a space, so it does not collide with standard Loop.
 URL_SCHEME_NAME = LoopCustom
