@@ -1,0 +1,222 @@
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index a756778..92e290e 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -55,6 +55,10 @@ public class DoseChart: ChartProviding {
+     /// (units on one shared axis). Empty draws the plain delivery chart.
+     public var activeInsulinPoints: [ChartPoint] = []
+ 
++    /// Display only: boluses the pump didn't deliver, drawn as a small × (or ? when the pump
++    /// couldn't tell whether it delivered) at the requested amount.
++    public var failedBoluses: [FailedBolusMark] = []
++
+     /// Display only. Holds the vertical scale steady while browsing.
+     public var yAxisRangeHolder = ChartYAxisRangeHolder()
+ 
+@@ -87,7 +91,16 @@ public extension DoseChart {
+                 ChartPoint(x: $0.x, y: ChartAxisValueDoubleLog(actualDouble: $0.y.scalar, unitString: "U", formatter: doseFormatter))
+             }
+ 
+-        let rangePoints = points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints
++        // Failed boluses, at the amount that was asked for.
++        let failedDateFormatter = DateFormatter(timeStyle: .short)
++        let failedPoints: [(point: ChartPoint, uncertain: Bool)] = failedBoluses.map { mark in
++            (point: ChartPoint(
++                x: ChartAxisValueDate(date: mark.date, formatter: failedDateFormatter),
++                y: ChartAxisValueDoubleLog(actualDouble: mark.units, unitString: "U", formatter: NumberFormatter.dose)
++            ), uncertain: mark.uncertain)
++        }
++
++        let rangePoints = points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints + failedPoints.map { $0.point }
+         let heldRangePoints = yAxisRangeHolder.extraPoints(for: rangePoints)
+         let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
+             chartPoints: rangePoints + heldRangePoints,
+@@ -127,6 +140,28 @@ public extension DoseChart {
+             bolusLayer = nil
+         }
+ 
++        let failedLayers: [ChartLayer] = [false, true].compactMap { uncertain in
++            let marks = failedPoints.filter { $0.uncertain == uncertain }.map { $0.point }
++            guard !marks.isEmpty else {
++                return nil
++            }
++            return ChartPointsViewsLayer<ChartPoint, UILabel>(
++                xAxis: xAxisLayer.axis,
++                yAxis: yAxisLayer.axis,
++                chartPoints: marks,
++                viewGenerator: { model, _, _ in
++                    let label = UILabel()
++                    label.text = uncertain ? "?" : "×"
++                    label.font = .systemFont(ofSize: 14, weight: .heavy)
++                    label.textColor = .systemRed
++                    label.sizeToFit()
++                    label.center = model.screenLoc
++                    return label
++                },
++                clipViews: false
++            )
++        }
++
+         // Active insulin overlay, drawn behind the delivery bars on the shared axis
+         var activeInsulinArea: ChartLayer?
+         var activeInsulinLine: ChartLayer?
+@@ -162,10 +197,15 @@ public extension DoseChart {
+                 xAxisLayer: xAxisLayer,
+                 yAxisLayer: yAxisLayer,
+                 axisLabelSettings: axisLabelSettings,
+-                chartPoints: points.highlight,
++                chartPoints: (points.highlight + failedPoints.map { $0.point }).sorted { $0.x.scalar < $1.x.scalar },
+                 tintColor: colors.insulinTint,
+                 gestureRecognizer: gestureRecognizer,
+-                extraText: { [activeInsulinPoints] chartPoint in
++                extraText: { [activeInsulinPoints, failedPoints] chartPoint in
++                    if let failed = failedPoints.first(where: { $0.point === chartPoint }) {
++                        return failed.uncertain
++                            ? LocalizedString("delivery uncertain", comment: "Shown while pressing and holding a bolus the pump couldn't confirm")
++                            : LocalizedString("not delivered", comment: "Shown while pressing and holding a bolus that failed")
++                    }
+                     // Active insulin at the same time as the delivery being shown.
+                     guard let nearest = activeInsulinPoints.min(by: { abs($0.x.scalar - chartPoint.x.scalar) < abs($1.x.scalar - chartPoint.x.scalar) }),
+                           abs(nearest.x.scalar - chartPoint.x.scalar) <= TimeInterval.minutes(15),
+@@ -189,7 +229,7 @@ public extension DoseChart {
+             doseArea,
+             doseLine,
+             bolusLayer
+-        ]
++        ] + failedLayers.map { Optional($0) }
+ 
+         let chart = Chart(frame: frame, innerFrame: innerFrame, settings: chartSettings, layers: layers.compactMap { $0 })
+ 
+@@ -260,3 +300,18 @@ public extension DoseChart {
+         return pointsCache
+     }
+ }
++
++
++/// A bolus that didn't go through (display only).
++public struct FailedBolusMark: Codable, Equatable {
++    public let date: Date
++    public let units: Double
++    /// The pump couldn't tell whether it delivered.
++    public let uncertain: Bool
++
++    public init(date: Date, units: Double, uncertain: Bool) {
++        self.date = date
++        self.units = units
++        self.uncertain = uncertain
++    }
++}
+diff --git a/Loop/Loop/Managers/DeviceDataManager.swift b/Loop/Loop/Managers/DeviceDataManager.swift
+index cabca1e..7aab435 100644
+--- a/Loop/Loop/Managers/DeviceDataManager.swift
++++ b/Loop/Loop/Managers/DeviceDataManager.swift
+@@ -847,6 +847,12 @@ extension DeviceDataManager {
+             pumpManager.enactBolus(units: units, activationType: activationType) { (error) in
+                 if let error = error {
+                     self.log.error("%{public}@", String(describing: error))
++                    // Display only: mark it on the insulin chart.
++                    if case .uncertainDelivery = error {
++                        FailedBolusLog.shared.record(units: units, uncertain: true)
++                    } else {
++                        FailedBolusLog.shared.record(units: units, uncertain: false)
++                    }
+                     switch error {
+                     case .uncertainDelivery:
+                         // Do not generate notification on uncertain delivery error
+diff --git a/Loop/Loop/Managers/DoseEnactor.swift b/Loop/Loop/Managers/DoseEnactor.swift
+index 55c782c..a00aba1 100644
+--- a/Loop/Loop/Managers/DoseEnactor.swift
++++ b/Loop/Loop/Managers/DoseEnactor.swift
+@@ -48,6 +48,12 @@ class DoseEnactor {
+                 pumpManager.enactBolus(units: bolusUnits, activationType: .automatic) { (error) in
+                     if let error = error {
+                         bolusError = error
++                        // Display only: mark the automatic bolus that didn't go through on the insulin chart.
++                        if case .uncertainDelivery = error {
++                            FailedBolusLog.shared.record(units: bolusUnits, uncertain: true)
++                        } else {
++                            FailedBolusLog.shared.record(units: bolusUnits, uncertain: false)
++                        }
+                     } else {
+                         self.log.default("PumpManager successfully issued bolus command")
+                     }
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 25964b5..5964775 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -126,6 +126,8 @@ extension StatusChartsManager {
+ extension StatusChartsManager {
+     func setDoseEntries(_ doseEntries: [DoseEntry]) {
+         dose.doseEntries = doseEntries
++        // Display only: boluses that didn't go through, as a small ×.
++        dose.failedBoluses = FailedBolusLog.shared.marks()
+         invalidateChart(atIndex: ChartIndex.dose.rawValue)
+     }
+ 
+@@ -413,3 +415,50 @@ final class LoopChartHistoryCache {
+         }
+     }
+ }
++
++
++/// Display only. Boluses the pump didn't deliver (manual and automatic), kept 7 days in the app's
++/// own folder so the insulin chart can mark them with a small ×. Nothing here is used for dosing.
++final class FailedBolusLog {
++    static let shared = FailedBolusLog()
++
++    private let queue = DispatchQueue(label: "com.loopkit.Loop.FailedBolusLog")
++    private var stored: [FailedBolusMark]
++    private let keepDuration: TimeInterval = .days(7)
++
++    private static var fileURL: URL? {
++        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
++            return nil
++        }
++        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
++        return base.appendingPathComponent("FailedBoluses.json")
++    }
++
++    init() {
++        if let url = Self.fileURL, let data = try? Data(contentsOf: url),
++           let saved = try? JSONDecoder().decode([FailedBolusMark].self, from: data) {
++            stored = saved
++        } else {
++            stored = []
++        }
++    }
++
++    /// Notes a bolus that came back with an error. `uncertain` means the pump couldn't tell
++    /// whether it delivered.
++    func record(units: Double, uncertain: Bool, at date: Date = Date()) {
++        guard units > 0 else {
++            return
++        }
++        queue.sync {
++            let oldest = date.addingTimeInterval(-keepDuration)
++            stored = stored.filter { $0.date >= oldest } + [FailedBolusMark(date: date, units: units, uncertain: uncertain)]
++            if let url = Self.fileURL, let data = try? JSONEncoder().encode(stored) {
++                try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++            }
++        }
++    }
++
++    func marks() -> [FailedBolusMark] {
++        return queue.sync { stored }
++    }
++}
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 6b50505..adab50f 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -386,6 +386,11 @@ final class ChartPreviewViewController: UIViewController {
+                 doses.append(DoseEntry(type: .bolus, startDate: date, value: 3, unit: .units))
+             }
+         }
++        // Two boluses that didn't go through (one uncertain), to check the × marks.
++        if FailedBolusLog.shared.marks().isEmpty {
++            FailedBolusLog.shared.record(units: 3, uncertain: false, at: now.addingTimeInterval(.minutes(-100)))
++            FailedBolusLog.shared.record(units: 1.5, uncertain: true, at: now.addingTimeInterval(.minutes(-40)))
++        }
+         charts.setDoseEntries(doses)
+ 
+         // Made-up loop history over 7 days: one missed reading 4 hours ago (stays green),
