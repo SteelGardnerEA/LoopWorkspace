@@ -1,0 +1,144 @@
+diff --git a/LoopKit/LoopKitUI/Charts/LoopStatusBackground.swift b/LoopKit/LoopKitUI/Charts/LoopStatusBackground.swift
+index 9d79490..26d5cc3 100644
+--- a/LoopKit/LoopKitUI/Charts/LoopStatusBackground.swift
++++ b/LoopKit/LoopKitUI/Charts/LoopStatusBackground.swift
+@@ -13,9 +13,11 @@ import SwiftCharts
+ import UIKit
+ 
+ public enum LoopStatusKind: Equatable {
+-    /// Loop completed a cycle recently.
++    /// Loop completed a cycle recently (the loop circle is green).
+     case looping
+-    /// No successful Loop cycle for longer than `LoopStatusTimeline.missedLoopThreshold`.
++    /// The last successful cycle is getting old (the loop circle is yellow).
++    case loopingLate
++    /// No successful Loop cycle for longer than `LoopStatusTimeline.missedLoopThreshold` (the loop circle is red).
+     case notLooping
+     /// The user turned automatic dosing off.
+     case automaticDosingOff
+@@ -45,12 +47,12 @@ public struct AutomaticDosingChange: Equatable {
+ }
+ 
+ public enum LoopStatusTimeline {
+-    /// How long without a successful cycle before the background turns red.
+-    /// Waiting this long keeps one missed reading from flashing red.
+-    public static let missedLoopThreshold: TimeInterval = .minutes(15)
++    /// Same limits as Loop's loop circle: green up to 6 minutes after a successful cycle,
++    /// yellow up to 16 minutes, red after that.
++    public static let freshThreshold: TimeInterval = .minutes(6)
+ 
+-    /// Normal time between Loop cycles.
+-    public static let loopInterval: TimeInterval = .minutes(5)
++    /// How long without a successful cycle before the background turns red.
++    public static let missedLoopThreshold: TimeInterval = .minutes(16)
+ 
+     /// Works out the background periods between `start` and `now`.
+     ///
+@@ -89,15 +91,17 @@ public enum LoopStatusTimeline {
+             connection.append(LoopStatusPeriod(start: clampedStart, end: clampedEnd, kind: kind))
+         }
+ 
+-        // Between two cycles: a short gap still counts as looping. A long gap is
+-        // looping for one normal cycle, then not looping until the next success.
++        // After each successful cycle, the same colors the loop circle would have shown:
++        // green, then yellow, then red until the next success.
+         func addInterval(from intervalStart: Date, to intervalEnd: Date) {
+-            if intervalEnd.timeIntervalSince(intervalStart) <= missedLoopThreshold {
+-                add(intervalStart, intervalEnd, .looping)
+-            } else {
+-                let lapse = intervalStart.addingTimeInterval(loopInterval)
+-                add(intervalStart, lapse, .looping)
+-                add(lapse, intervalEnd, .notLooping)
++            let late = intervalStart.addingTimeInterval(freshThreshold)
++            let missed = intervalStart.addingTimeInterval(missedLoopThreshold)
++            add(intervalStart, min(late, intervalEnd), .looping)
++            if intervalEnd > late {
++                add(late, min(missed, intervalEnd), .loopingLate)
++            }
++            if intervalEnd > missed {
++                add(missed, intervalEnd, .notLooping)
+             }
+         }
+ 
+@@ -188,6 +192,8 @@ extension LoopStatusKind {
+         switch self {
+         case .looping:
+             return UIColor.systemGreen.withAlphaComponent(0.12)
++        case .loopingLate:
++            return UIColor.systemYellow.withAlphaComponent(0.18)
+         case .notLooping:
+             return UIColor.systemRed.withAlphaComponent(0.09)
+         case .automaticDosingOff:
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 5964775..df12576 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -124,10 +124,10 @@ extension StatusChartsManager {
+ 
+ 
+ extension StatusChartsManager {
+-    func setDoseEntries(_ doseEntries: [DoseEntry]) {
++    func setDoseEntries(_ doseEntries: [DoseEntry], deliveryIsUncertain: Bool = false) {
+         dose.doseEntries = doseEntries
+-        // Display only: boluses that didn't go through, as a small ×.
+-        dose.failedBoluses = FailedBolusLog.shared.marks()
++        // Display only: boluses that didn't go through, as a small × (? while still unknown).
++        dose.failedBoluses = FailedBolusLog.shared.resolvedMarks(doseEntries: doseEntries, deliveryIsUncertain: deliveryIsUncertain)
+         invalidateChart(atIndex: ChartIndex.dose.rawValue)
+     }
+ 
+@@ -461,4 +461,28 @@ final class FailedBolusLog {
+     func marks() -> [FailedBolusMark] {
+         return queue.sync { stored }
+     }
++
++    /// The marks to draw. An uncertain one (?) is settled once Loop knows: if a bolus shows up
++    /// in the pump history right around then, it went through and the mark is dropped; once the
++    /// pump no longer reports uncertain delivery and no bolus showed up, it becomes an ×.
++    func resolvedMarks(doseEntries: [DoseEntry], deliveryIsUncertain: Bool) -> [FailedBolusMark] {
++        let deliveredBolusDates = doseEntries
++            .filter { $0.type == .bolus && ($0.deliveredUnits ?? $0.programmedUnits) > 0 }
++            .map { $0.startDate }
++        return marks().compactMap { mark in
++            guard mark.uncertain else {
++                return mark
++            }
++            let delivered = deliveredBolusDates.contains { date in
++                date >= mark.date.addingTimeInterval(.minutes(-2)) && date <= mark.date.addingTimeInterval(.minutes(10))
++            }
++            if delivered {
++                return nil
++            }
++            if deliveryIsUncertain {
++                return mark
++            }
++            return FailedBolusMark(date: mark.date, units: mark.units, uncertain: false)
++        }
++    }
+ }
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index adab50f..19a489f 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -391,7 +391,7 @@ final class ChartPreviewViewController: UIViewController {
+             FailedBolusLog.shared.record(units: 3, uncertain: false, at: now.addingTimeInterval(.minutes(-100)))
+             FailedBolusLog.shared.record(units: 1.5, uncertain: true, at: now.addingTimeInterval(.minutes(-40)))
+         }
+-        charts.setDoseEntries(doses)
++        charts.setDoseEntries(doses, deliveryIsUncertain: true)
+ 
+         // Made-up loop history over 7 days: one missed reading 4 hours ago (stays green),
+         // outages 2.5 hours and about 2.5 days ago (red), and automatic dosing off for
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index f3d9273..a92fb8b 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -924,7 +924,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+             // Insulin Delivery
+             if let doseEntries = doseEntries {
+-                charts.setDoseEntries(doseEntries)
++                charts.setDoseEntries(doseEntries, deliveryIsUncertain: self.deviceManager.pumpManagerStatus?.deliveryIsUncertain ?? false)
+             }
+             if let totalDelivery = totalDelivery {
+                 self.totalDelivery = totalDelivery
