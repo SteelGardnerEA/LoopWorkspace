@@ -1,0 +1,132 @@
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index 92e290e..d3daeca 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -14,6 +14,8 @@ fileprivate struct DosePointsCache {
+     let basal: [ChartPoint]
+     let basalFill: [ChartPoint]
+     let bolus: [ChartPoint]
++    /// Display only: doses logged by hand (shots), drawn as a syringe, with the insulin name if known.
++    let shots: [(point: ChartPoint, insulinName: String?)]
+     let highlight: [ChartPoint]
+ }
+ 
+@@ -100,7 +102,7 @@ public extension DoseChart {
+             ), uncertain: mark.uncertain)
+         }
+ 
+-        let rangePoints = points.basal + points.bolus + doseDisplayRangePoints + activeInsulinScaledPoints + failedPoints.map { $0.point }
++        let rangePoints = points.basal + points.bolus + points.shots.map { $0.point } + doseDisplayRangePoints + activeInsulinScaledPoints + failedPoints.map { $0.point }
+         let heldRangePoints = yAxisRangeHolder.extraPoints(for: rangePoints)
+         let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
+             chartPoints: rangePoints + heldRangePoints,
+@@ -140,6 +142,26 @@ public extension DoseChart {
+             bolusLayer = nil
+         }
+ 
++        // Logged shots: a small syringe in the insulin color instead of the triangle.
++        var shotLayer: ChartLayer?
++        if !points.shots.isEmpty {
++            let syringe = UIImage(systemName: "syringe.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))?
++                .withRenderingMode(.alwaysTemplate)
++            shotLayer = ChartPointsViewsLayer<ChartPoint, UIImageView>(
++                xAxis: xAxisLayer.axis,
++                yAxis: yAxisLayer.axis,
++                chartPoints: points.shots.map { $0.point },
++                viewGenerator: { model, _, _ in
++                    let view = UIImageView(image: syringe)
++                    view.tintColor = colors.insulinTint
++                    view.sizeToFit()
++                    view.center = model.screenLoc
++                    return view
++                },
++                clipViews: false
++            )
++        }
++
+         let failedLayers: [ChartLayer] = [false, true].compactMap { uncertain in
+             let marks = failedPoints.filter { $0.uncertain == uncertain }.map { $0.point }
+             guard !marks.isEmpty else {
+@@ -200,7 +222,12 @@ public extension DoseChart {
+                 chartPoints: (points.highlight + failedPoints.map { $0.point }).sorted { $0.x.scalar < $1.x.scalar },
+                 tintColor: colors.insulinTint,
+                 gestureRecognizer: gestureRecognizer,
+-                extraText: { [activeInsulinPoints, failedPoints] chartPoint in
++                extraText: { [activeInsulinPoints, failedPoints, shots = points.shots] chartPoint in
++                    var shotText: String?
++                    if let shot = shots.first(where: { $0.point === chartPoint }) {
++                        let word = LocalizedString("shot", comment: "Shown while pressing and holding a dose that was logged by hand")
++                        shotText = shot.insulinName.map { "\(word) · \($0)" } ?? word
++                    }
+                     if let failed = failedPoints.first(where: { $0.point === chartPoint }) {
+                         return failed.uncertain
+                             ? LocalizedString("delivery uncertain", comment: "Shown while pressing and holding a bolus the pump couldn't confirm")
+@@ -210,9 +237,10 @@ public extension DoseChart {
+                     guard let nearest = activeInsulinPoints.min(by: { abs($0.x.scalar - chartPoint.x.scalar) < abs($1.x.scalar - chartPoint.x.scalar) }),
+                           abs(nearest.x.scalar - chartPoint.x.scalar) <= TimeInterval.minutes(15),
+                           let amount = doseFormatter.string(from: NSNumber(value: nearest.y.scalar)) else {
+-                        return nil
++                        return shotText
+                     }
+-                    return String(format: LocalizedString("%@ U active", comment: "Active insulin shown while pressing and holding the insulin chart (1: units)"), amount)
++                    let activeText = String(format: LocalizedString("%@ U active", comment: "Active insulin shown while pressing and holding the insulin chart (1: units)"), amount)
++                    return shotText.map { "\($0) · \(activeText)" } ?? activeText
+                 }
+             )
+         }
+@@ -228,7 +256,8 @@ public extension DoseChart {
+             activeInsulinLine,
+             doseArea,
+             doseLine,
+-            bolusLayer
++            bolusLayer,
++            shotLayer
+         ] + failedLayers.map { Optional($0) }
+ 
+         let chart = Chart(frame: frame, innerFrame: innerFrame, settings: chartSettings, layers: layers.compactMap { $0 })
+@@ -253,6 +282,7 @@ public extension DoseChart {
+         var basalPoints = [ChartPoint]()
+         var basalFillPoints = [ChartPoint]()
+         var bolusPoints = [ChartPoint]()
++        var shotPoints = [(point: ChartPoint, insulinName: String?)]()
+         var highlightPoints = [ChartPoint]()
+         
+         for entry in doseEntries {
+@@ -263,7 +293,11 @@ public extension DoseChart {
+                 let y = ChartAxisValueDoubleLog(actualDouble: entry.unitsInDeliverableIncrements, unitString: "U", formatter: doseFormatter)
+ 
+                 let point = ChartPoint(x: x, y: y)
+-                bolusPoints.append(point)
++                if entry.manuallyEntered {
++                    shotPoints.append((point: point, insulinName: entry.insulinType?.brandName))
++                } else {
++                    bolusPoints.append(point)
++                }
+                 highlightPoints.append(point)
+             } else if time > 0 {
+                 // TODO: Display the DateInterval
+@@ -295,7 +329,7 @@ public extension DoseChart {
+             }
+         }
+         
+-        let pointsCache = DosePointsCache(basal: basalPoints, basalFill: basalFillPoints, bolus: bolusPoints, highlight: highlightPoints)
++        let pointsCache = DosePointsCache(basal: basalPoints, basalFill: basalFillPoints, bolus: bolusPoints, shots: shotPoints, highlight: highlightPoints)
+         self.pointsCache = pointsCache
+         return pointsCache
+     }
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 19a489f..1f8cb43 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -386,6 +386,11 @@ final class ChartPreviewViewController: UIViewController {
+                 doses.append(DoseEntry(type: .bolus, startDate: date, value: 3, unit: .units))
+             }
+         }
++        // A shot logged by hand, to check the syringe icon.
++        let shotDate = now.addingTimeInterval(.minutes(-150))
++        if shotDate >= start && shotDate <= dataEnd {
++            doses.append(DoseEntry(type: .bolus, startDate: shotDate, value: 4, unit: .units, insulinType: .humalog, manuallyEntered: true))
++        }
+         // Two boluses that didn't go through (one uncertain), to check the × marks.
+         if FailedBolusLog.shared.marks().isEmpty {
+             FailedBolusLog.shared.record(units: 3, uncertain: false, at: now.addingTimeInterval(.minutes(-100)))
