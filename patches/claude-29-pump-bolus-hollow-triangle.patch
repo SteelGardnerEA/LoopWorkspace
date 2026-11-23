@@ -1,0 +1,126 @@
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index d3daeca..b2b9d37 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -16,6 +16,8 @@ fileprivate struct DosePointsCache {
+     let bolus: [ChartPoint]
+     /// Display only: doses logged by hand (shots), drawn as a syringe, with the insulin name if known.
+     let shots: [(point: ChartPoint, insulinName: String?)]
++    /// Display only: boluses entered on the pump's own buttons (as the pump reports it), drawn as a hollow triangle.
++    let pumpBoluses: [ChartPoint]
+     let highlight: [ChartPoint]
+ }
+ 
+@@ -102,7 +104,7 @@ public extension DoseChart {
+             ), uncertain: mark.uncertain)
+         }
+ 
+-        let rangePoints = points.basal + points.bolus + points.shots.map { $0.point } + doseDisplayRangePoints + activeInsulinScaledPoints + failedPoints.map { $0.point }
++        let rangePoints = points.basal + points.bolus + points.shots.map { $0.point } + points.pumpBoluses + doseDisplayRangePoints + activeInsulinScaledPoints + failedPoints.map { $0.point }
+         let heldRangePoints = yAxisRangeHolder.extraPoints(for: rangePoints)
+         let yAxisValues = ChartAxisValuesStaticGenerator.generateYAxisValuesUsingLinearSegmentStep(
+             chartPoints: rangePoints + heldRangePoints,
+@@ -162,6 +164,38 @@ public extension DoseChart {
+             )
+         }
+ 
++        // Boluses entered on the pump itself: the same triangle, hollow.
++        var pumpBolusLayer: ChartLayer?
++        if !points.pumpBoluses.isEmpty {
++            let size = CGSize(width: bolusPointSize, height: bolusPointSize)
++            pumpBolusLayer = ChartPointsViewsLayer<ChartPoint, UIView>(
++                xAxis: xAxisLayer.axis,
++                yAxis: yAxisLayer.axis,
++                chartPoints: points.pumpBoluses,
++                viewGenerator: { model, _, _ in
++                    let view = UIView(frame: CGRect(origin: .zero, size: size))
++                    view.isUserInteractionEnabled = false
++                    let lineWidth: CGFloat = 1.5
++                    let inset = lineWidth / 2
++                    let path = UIBezierPath()
++                    path.move(to: CGPoint(x: size.width / 2, y: size.height - inset))
++                    path.addLine(to: CGPoint(x: size.width - inset, y: inset))
++                    path.addLine(to: CGPoint(x: inset, y: inset))
++                    path.close()
++                    let shape = CAShapeLayer()
++                    shape.path = path.cgPath
++                    shape.fillColor = UIColor.clear.cgColor
++                    shape.strokeColor = colors.insulinTint.cgColor
++                    shape.lineWidth = lineWidth
++                    shape.lineJoin = .round
++                    view.layer.addSublayer(shape)
++                    view.center = model.screenLoc
++                    return view
++                },
++                clipViews: false
++            )
++        }
++
+         let failedLayers: [ChartLayer] = [false, true].compactMap { uncertain in
+             let marks = failedPoints.filter { $0.uncertain == uncertain }.map { $0.point }
+             guard !marks.isEmpty else {
+@@ -222,11 +256,13 @@ public extension DoseChart {
+                 chartPoints: (points.highlight + failedPoints.map { $0.point }).sorted { $0.x.scalar < $1.x.scalar },
+                 tintColor: colors.insulinTint,
+                 gestureRecognizer: gestureRecognizer,
+-                extraText: { [activeInsulinPoints, failedPoints, shots = points.shots] chartPoint in
++                extraText: { [activeInsulinPoints, failedPoints, shots = points.shots, pumpBoluses = points.pumpBoluses] chartPoint in
+                     var shotText: String?
+                     if let shot = shots.first(where: { $0.point === chartPoint }) {
+                         let word = LocalizedString("shot", comment: "Shown while pressing and holding a dose that was logged by hand")
+                         shotText = shot.insulinName.map { "\(word) · \($0)" } ?? word
++                    } else if pumpBoluses.contains(where: { $0 === chartPoint }) {
++                        shotText = LocalizedString("from pump", comment: "Shown while pressing and holding a bolus entered on the pump itself")
+                     }
+                     if let failed = failedPoints.first(where: { $0.point === chartPoint }) {
+                         return failed.uncertain
+@@ -257,6 +293,7 @@ public extension DoseChart {
+             doseArea,
+             doseLine,
+             bolusLayer,
++            pumpBolusLayer,
+             shotLayer
+         ] + failedLayers.map { Optional($0) }
+ 
+@@ -283,6 +320,7 @@ public extension DoseChart {
+         var basalFillPoints = [ChartPoint]()
+         var bolusPoints = [ChartPoint]()
+         var shotPoints = [(point: ChartPoint, insulinName: String?)]()
++        var pumpBolusPoints = [ChartPoint]()
+         var highlightPoints = [ChartPoint]()
+         
+         for entry in doseEntries {
+@@ -295,6 +333,8 @@ public extension DoseChart {
+                 let point = ChartPoint(x: x, y: y)
+                 if entry.manuallyEntered {
+                     shotPoints.append((point: point, insulinName: entry.insulinType?.brandName))
++                } else if entry.wasProgrammedByPumpUI {
++                    pumpBolusPoints.append(point)
+                 } else {
+                     bolusPoints.append(point)
+                 }
+@@ -329,7 +369,7 @@ public extension DoseChart {
+             }
+         }
+         
+-        let pointsCache = DosePointsCache(basal: basalPoints, basalFill: basalFillPoints, bolus: bolusPoints, shots: shotPoints, highlight: highlightPoints)
++        let pointsCache = DosePointsCache(basal: basalPoints, basalFill: basalFillPoints, bolus: bolusPoints, shots: shotPoints, pumpBoluses: pumpBolusPoints, highlight: highlightPoints)
+         self.pointsCache = pointsCache
+         return pointsCache
+     }
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 1f8cb43..37a38a5 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -391,6 +391,11 @@ final class ChartPreviewViewController: UIViewController {
+         if shotDate >= start && shotDate <= dataEnd {
+             doses.append(DoseEntry(type: .bolus, startDate: shotDate, value: 4, unit: .units, insulinType: .humalog, manuallyEntered: true))
+         }
++        // A bolus entered on the pump's own buttons, to check the hollow triangle.
++        let pumpBolusDate = now.addingTimeInterval(.minutes(-20))
++        if pumpBolusDate >= start && pumpBolusDate <= dataEnd {
++            doses.append(DoseEntry(type: .bolus, startDate: pumpBolusDate, value: 2, unit: .units, wasProgrammedByPumpUI: true))
++        }
+         // Two boluses that didn't go through (one uncertain), to check the × marks.
+         if FailedBolusLog.shared.marks().isEmpty {
+             FailedBolusLog.shared.record(units: 3, uncertain: false, at: now.addingTimeInterval(.minutes(-100)))
