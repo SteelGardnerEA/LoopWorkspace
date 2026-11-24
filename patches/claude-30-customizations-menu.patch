@@ -1,0 +1,904 @@
+diff --git a/LoopKit/LoopKitUI/Charts/DoseChart.swift b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+index b2b9d37..ec5ac3c 100644
+--- a/LoopKit/LoopKitUI/Charts/DoseChart.swift
++++ b/LoopKit/LoopKitUI/Charts/DoseChart.swift
+@@ -63,6 +63,16 @@ public class DoseChart: ChartProviding {
+     /// couldn't tell whether it delivered) at the requested amount.
+     public var failedBoluses: [FailedBolusMark] = []
+ 
++    /// Display only: logged shots draw as a syringe and pump-entered boluses as a hollow triangle.
++    /// When false, every bolus is the usual solid triangle.
++    public var showsBolusSourceIcons = true {
++        didSet {
++            if showsBolusSourceIcons != oldValue {
++                pointsCache = nil
++            }
++        }
++    }
++
+     /// Display only. Holds the vertical scale steady while browsing.
+     public var yAxisRangeHolder = ChartYAxisRangeHolder()
+ 
+@@ -331,9 +341,9 @@ public extension DoseChart {
+                 let y = ChartAxisValueDoubleLog(actualDouble: entry.unitsInDeliverableIncrements, unitString: "U", formatter: doseFormatter)
+ 
+                 let point = ChartPoint(x: x, y: y)
+-                if entry.manuallyEntered {
++                if showsBolusSourceIcons && entry.manuallyEntered {
+                     shotPoints.append((point: point, insulinName: entry.insulinType?.brandName))
+-                } else if entry.wasProgrammedByPumpUI {
++                } else if showsBolusSourceIcons && entry.wasProgrammedByPumpUI {
+                     pumpBolusPoints.append(point)
+                 } else {
+                     bolusPoints.append(point)
+diff --git a/Loop/Loop/Managers/Alerts/AlertManager.swift b/Loop/Loop/Managers/Alerts/AlertManager.swift
+index a7eaa11..57699a9 100644
+--- a/Loop/Loop/Managers/Alerts/AlertManager.swift
++++ b/Loop/Loop/Managers/Alerts/AlertManager.swift
+@@ -376,8 +376,8 @@ extension AlertManager: AlertManagerResponder {
+ extension AlertManager: AlertIssuer {
+ 
+     public func issueAlert(_ alert: Alert) {
+-        // Steel's setting: a low reservoir alert repeats at most once per chosen interval.
+-        if LowReservoirAlertThrottle.shouldSuppress(alert) {
++        // Customization: a low reservoir alert repeats at most once per chosen interval.
++        if Customization.lowReservoirRepeat.isOn, LowReservoirAlertThrottle.shouldSuppress(alert) {
+             log.default("Low reservoir alert suppressed (repeat interval): %{public}@", alert.identifier.value)
+             return
+         }
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index df12576..5aac98a 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -34,9 +34,9 @@ class StatusChartsManager: ChartsManager {
+         let dose = DoseChart()
+         let cob = COBChart()
+         self.glucose = glucose
+-        // Steel's choice: the main glucose chart tops out at 300 mg/dL. Higher readings sit on
++        // Customization: the main glucose chart can top out at 300 mg/dL. Higher readings sit on
+         // the top edge; press-and-hold shows the real number.
+-        glucose.glucoseCeilingMGDL = Self.glucoseChartCeiling
++        glucose.glucoseCeilingMGDL = Customization.glucoseCeiling.isOn ? Self.glucoseChartCeiling : nil
+         self.iob = iob
+         self.dose = dose
+         self.cob = cob
+@@ -112,8 +112,8 @@ extension StatusChartsManager {
+         iob.setIOBValues(iobValues)
+         invalidateChart(atIndex: ChartIndex.iob.rawValue)
+ 
+-        // The main screen shows active insulin inside the insulin delivery chart.
+-        dose.activeInsulinPoints = iob.iobPoints
++        // Customization: the main screen can show active insulin inside the insulin delivery chart.
++        dose.activeInsulinPoints = Customization.combinedInsulinChart.isOn ? iob.iobPoints : []
+         invalidateChart(atIndex: ChartIndex.dose.rawValue)
+     }
+ 
+@@ -125,9 +125,11 @@ extension StatusChartsManager {
+ 
+ extension StatusChartsManager {
+     func setDoseEntries(_ doseEntries: [DoseEntry], deliveryIsUncertain: Bool = false) {
++        let showsBolusMarks = Customization.bolusMarks.isOn
++        dose.showsBolusSourceIcons = showsBolusMarks
+         dose.doseEntries = doseEntries
+         // Display only: boluses that didn't go through, as a small × (? while still unknown).
+-        dose.failedBoluses = FailedBolusLog.shared.resolvedMarks(doseEntries: doseEntries, deliveryIsUncertain: deliveryIsUncertain)
++        dose.failedBoluses = showsBolusMarks ? FailedBolusLog.shared.resolvedMarks(doseEntries: doseEntries, deliveryIsUncertain: deliveryIsUncertain) : []
+         invalidateChart(atIndex: ChartIndex.dose.rawValue)
+     }
+ 
+@@ -152,6 +154,7 @@ extension StatusChartsManager {
+ extension StatusChartsManager {
+     /// Display only. Shades every chart's background with Loop's running status.
+     func setLoopStatusPeriods(_ periods: [LoopStatusPeriod]) {
++        let periods = Customization.loopStatusBackground.isOn ? periods : []
+         guard periods != glucose.loopStatusPeriods else {
+             return
+         }
+@@ -169,7 +172,7 @@ extension StatusChartsManager {
+ extension StatusChartsManager {
+     /// Display only. Faint lines for earlier predictions on the glucose chart.
+     func setPastPredictions(_ predictions: [[GlucoseValue]]) {
+-        glucose.pastPredictions = predictions
++        glucose.pastPredictions = Customization.forecastCloud.isOn ? predictions : []
+         invalidateChart(atIndex: ChartIndex.glucose.rawValue)
+     }
+ 
+@@ -184,7 +187,7 @@ extension StatusChartsManager {
+ 
+     /// Display only. While pressing and holding, show just the prediction made at that time.
+     func focusPastPrediction(with recognizer: UIGestureRecognizer?) {
+-        glucose.focusPastPrediction(with: recognizer)
++        glucose.focusPastPrediction(with: Customization.forecastCloud.isOn ? recognizer : nil)
+     }
+ }
+ 
+@@ -211,6 +214,16 @@ extension StatusChartsManager {
+         cob.yAxisRangeHolder.isHolding = holds
+     }
+ 
++    /// Re-reads the glucose ceiling switch (Settings → Customizations).
++    func applyGlucoseCeilingCustomization() {
++        let ceiling = Customization.glucoseCeiling.isOn ? Self.glucoseChartCeiling : nil
++        guard glucose.glucoseCeilingMGDL != ceiling else {
++            return
++        }
++        glucose.glucoseCeilingMGDL = ceiling
++        invalidateChart(atIndex: ChartIndex.glucose.rawValue)
++    }
++
+     /// Display only. Sets the glucose chart's vertical scale, redrawing only if it changed.
+     func setGlucoseDisplayRange(_ range: ClosedRange<HKQuantity>) {
+         guard range != glucose.glucoseDisplayRange else {
+@@ -244,7 +257,7 @@ extension StatusChartsManager {
+         }
+ 
+         let bottom = max(39, (min(week.lowerBound, defaultLower, 70) / 10).rounded(.down) * 10)
+-        let cappedTop = min(max(top, defaultUpper), glucoseChartCeiling)
++        let cappedTop = Customization.glucoseCeiling.isOn ? min(max(top, defaultUpper), glucoseChartCeiling) : max(top, defaultUpper)
+         return HKQuantity(unit: .milligramsPerDeciliter, doubleValue: bottom)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: cappedTop)
+     }
+ }
+@@ -486,3 +499,170 @@ final class FailedBolusLog {
+         }
+     }
+ }
++
++
++// MARK: - Customizations
++
++/// Optional features, each turned on or off in Settings → Customizations. Every one is off
++/// unless turned on, so a fresh build works like regular Loop.
++enum Customization: String, CaseIterable, Identifiable {
++    case loopStatusBackground
++    case combinedInsulinChart
++    case chartHistoryAndGestures
++    case forecastCloud
++    case glucoseCeiling
++    case bolusMarks
++    case mealBreakdown
++    case lowReservoirRepeat
++    case originalToolbarSize
++
++    /// What a switch is set to before anyone touches it. A personal build can change this one line
++    /// to start with everything on.
++    static let defaultIsOn = false
++
++    /// Posted on the main queue whenever a switch changes.
++    static let didChangeNotification = Notification.Name("com.loopkit.Loop.CustomizationDidChange")
++
++    var id: String { rawValue }
++
++    private var defaultsKey: String { "com.loopkit.Loop.Customization." + rawValue }
++
++    var isOn: Bool {
++        get {
++            return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? Self.defaultIsOn
++        }
++        nonmutating set {
++            UserDefaults.standard.set(newValue, forKey: defaultsKey)
++            NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
++        }
++    }
++
++    /// A snapshot of every switch, to tell whether anything changed.
++    static var current: [Customization: Bool] {
++        return Dictionary(uniqueKeysWithValues: allCases.map { ($0, $0.isOn) })
++    }
++
++    enum Group: CaseIterable {
++        case charts
++        case meals
++        case alerts
++        case layout
++
++        var title: String {
++            switch self {
++            case .charts: return NSLocalizedString("Charts", comment: "Customizations group: charts")
++            case .meals: return NSLocalizedString("Meals", comment: "Customizations group: meals")
++            case .alerts: return NSLocalizedString("Alerts", comment: "Customizations group: alerts")
++            case .layout: return NSLocalizedString("Layout", comment: "Customizations group: layout")
++            }
++        }
++
++        var members: [Customization] {
++            return Customization.allCases.filter { $0.group == self }
++        }
++    }
++
++    var group: Group {
++        switch self {
++        case .loopStatusBackground, .combinedInsulinChart, .chartHistoryAndGestures, .forecastCloud, .glucoseCeiling, .bolusMarks:
++            return .charts
++        case .mealBreakdown:
++            return .meals
++        case .lowReservoirRepeat:
++            return .alerts
++        case .originalToolbarSize:
++            return .layout
++        }
++    }
++
++    var systemImage: String {
++        switch self {
++        case .loopStatusBackground: return "square.stack.3d.down.right"
++        case .combinedInsulinChart: return "drop"
++        case .chartHistoryAndGestures: return "hand.draw"
++        case .forecastCloud: return "scribble.variable"
++        case .glucoseCeiling: return "arrow.up.to.line"
++        case .bolusMarks: return "syringe"
++        case .mealBreakdown: return "fork.knife"
++        case .lowReservoirRepeat: return "bell.badge"
++        case .originalToolbarSize: return "rectangle.bottomthird.inset.filled"
++        }
++    }
++
++    var title: String {
++        switch self {
++        case .loopStatusBackground: return NSLocalizedString("Loop Status Background", comment: "Customization title")
++        case .combinedInsulinChart: return NSLocalizedString("Combined Insulin Chart", comment: "Customization title")
++        case .chartHistoryAndGestures: return NSLocalizedString("7-Day History and Gestures", comment: "Customization title")
++        case .forecastCloud: return NSLocalizedString("Past Predictions", comment: "Customization title")
++        case .glucoseCeiling: return NSLocalizedString("Glucose Chart Capped at 300", comment: "Customization title")
++        case .bolusMarks: return NSLocalizedString("Bolus Marks", comment: "Customization title")
++        case .mealBreakdown: return NSLocalizedString("Meal Breakdown", comment: "Customization title")
++        case .lowReservoirRepeat: return NSLocalizedString("Low Reservoir Repeat", comment: "Customization title")
++        case .originalToolbarSize: return NSLocalizedString("Original Bottom Bar Size", comment: "Customization title")
++        }
++    }
++
++    /// One line for the list.
++    var summary: String {
++        switch self {
++        case .loopStatusBackground: return NSLocalizedString("Chart background shows when Loop was running", comment: "Customization summary")
++        case .combinedInsulinChart: return NSLocalizedString("Active insulin drawn inside the delivery chart", comment: "Customization summary")
++        case .chartHistoryAndGestures: return NSLocalizedString("Swipe back through 7 days, pinch to zoom", comment: "Customization summary")
++        case .forecastCloud: return NSLocalizedString("Faint lines of earlier predictions", comment: "Customization summary")
++        case .glucoseCeiling: return NSLocalizedString("Keeps the glucose scale from stretching", comment: "Customization summary")
++        case .bolusMarks: return NSLocalizedString("Failed boluses, shots, and pump boluses", comment: "Customization summary")
++        case .mealBreakdown: return NSLocalizedString("Split a meal into timed carb entries", comment: "Customization summary")
++        case .lowReservoirRepeat: return NSLocalizedString("Choose how often the alert repeats", comment: "Customization summary")
++        case .originalToolbarSize: return NSLocalizedString("Wider buttons on iOS 27", comment: "Customization summary")
++        }
++    }
++
++    /// The explanation on the feature's own page.
++    var details: [String] {
++        switch self {
++        case .loopStatusBackground:
++            return [
++                NSLocalizedString("Shades the background of the main screen charts to match the loop circle: green while Loop is running, yellow 6 to 16 minutes after the last successful cycle, red after 16 minutes, and gray while automatic dosing is off.", comment: "Customization details"),
++                NSLocalizedString("Built from Loop's own saved cycle records. The app also keeps a small 7-day copy so the history survives a restart. Display only.", comment: "Customization details"),
++            ]
++        case .combinedInsulinChart:
++            return [
++                NSLocalizedString("Replaces the separate Active Insulin chart. Active insulin is drawn as a light shaded area behind the insulin delivery bars, on the same scale, so 2 units active sits at the same height as a 2 unit bolus.", comment: "Customization details"),
++                NSLocalizedString("The chart's subtitle shows active insulin and today's total. Press and hold shows the active insulin at that time. Display only.", comment: "Customization details"),
++            ]
++        case .chartHistoryAndGestures:
++            return [
++                NSLocalizedString("Swipe sideways on the charts to go back up to 7 days, with a glide when you flick. Pinch to show 1 to 24 hours. Press and hold to read values. Double-tap a chart to open its detail screen; a single tap does nothing, so dragging never opens a screen by accident.", comment: "Customization details"),
++                NSLocalizedString("While scrolled back, a \"Back to now\" button appears below the charts, the current forecast stays on screen, and the glucose scale is fixed from the last 7 days so it doesn't jump. Reopening the app always returns to now. Display only.", comment: "Customization details"),
++            ]
++        case .forecastCloud:
++            return [
++                NSLocalizedString("Draws every prediction Loop made in the past as a faint line, 4 hours ahead each, so you can see how the forecast changed over time.", comment: "Customization details"),
++                NSLocalizedString("Press and hold the glucose chart to see just the prediction Loop made at that moment. The faint lines can be hidden with \"Show Past Predictions\" on the glucose detail screen. Display only.", comment: "Customization details"),
++            ]
++        case .glucoseCeiling:
++            return [
++                NSLocalizedString("The main glucose chart tops out at 300 mg/dL, so one high reading doesn't squash the rest of the chart. Higher readings sit on the top edge; press and hold shows the real number. Display only.", comment: "Customization details"),
++            ]
++        case .bolusMarks:
++            return [
++                NSLocalizedString("Marks on the insulin chart: a red × where a bolus came back with an error, and a red ? when the pump couldn't confirm delivery. A ? disappears when the bolus shows up in the pump history, or turns into an × once the pump knows it wasn't delivered.", comment: "Customization details"),
++                NSLocalizedString("Bolus icons: a solid triangle for boluses Loop sent, a hollow triangle for boluses entered on the pump's own buttons (pumps that report it, such as Medtronic), and a syringe for shots logged with Log Dose. Display only.", comment: "Customization details"),
++            ]
++        case .mealBreakdown:
++            return [
++                NSLocalizedString("Adds a Meal Breakdown tab to the carb entry screen. Enter a meal's time, carbs, sugars, fiber, protein, and fat, and it is split into up to three timed carb entries: 🍭 sugars now, 🌮 most starches now over 3 hours, and 🍕 the rest plus some protein, starting later.", comment: "Customization details"),
++                NSLocalizedString("Unlike the chart features, this creates real carb entries, which Loop uses for dosing. Loop's own bolus screen then opens with its own recommendation. The formula can be changed below, and every Meal Breakdown is kept in Meal History.", comment: "Customization details"),
++            ]
++        case .lowReservoirRepeat:
++            return [
++                NSLocalizedString("Lets you choose how often the low reservoir notification on the phone repeats, from 5 minutes to 8 hours. The first alert always comes through. \"Reservoir empty\" and every other alert are not affected, and the pump's own beeps are unchanged.", comment: "Customization details"),
++            ]
++        case .originalToolbarSize:
++            return [
++                NSLocalizedString("On iOS 27, Loop removes the spacing around the buttons in the bottom bar (carbs, pre-meal, bolus, workout, and settings), which makes the bar narrower. This keeps the spacing, so the bar stays its earlier size. No effect before iOS 27.", comment: "Customization details"),
++            ]
++        }
++    }
++}
+diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
+index 37a38a5..147e2d1 100644
+--- a/Loop/Loop/SceneDelegate.swift
++++ b/Loop/Loop/SceneDelegate.swift
+@@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+     static var isChartPreview: Bool {
+         #if DEBUG
+         let arguments = ProcessInfo.processInfo.arguments
+-        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview") || arguments.contains("-ClaudeLowReservoirPreview") || arguments.contains("-ClaudeMealHistoryPreview")
++        return arguments.contains("-ClaudeChartPreview") || arguments.contains("-ClaudeMealPreview") || arguments.contains("-ClaudeMealSettingsPreview") || arguments.contains("-ClaudeLowReservoirPreview") || arguments.contains("-ClaudeMealHistoryPreview") || arguments.contains("-ClaudeCustomizationsPreview")
+         #else
+         return false
+         #endif
+@@ -53,6 +53,22 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+         #if DEBUG
+         // Simulator screenshots only. Debug builds only, so this never exists in a
+         // TestFlight or phone build. Loop is never started on this path.
++        let previewArguments = ProcessInfo.processInfo.arguments
++        if let index = previewArguments.firstIndex(of: "-ClaudeCustomizations"), index + 1 < previewArguments.count {
++            // Every switch in Settings → Customizations on or off, for the screenshots.
++            let on = previewArguments[index + 1] == "on"
++            for customization in Customization.allCases {
++                customization.isOn = on
++            }
++        }
++
++        if previewArguments.contains("-ClaudeCustomizationsPreview") {
++            // Settings → Customizations.
++            window?.rootViewController = UIHostingController(rootView: NavigationStack { CustomizationsView() })
++            window?.makeKeyAndVisible()
++            return
++        }
++
+         if ProcessInfo.processInfo.arguments.contains("-ClaudeMealHistoryPreview") {
+             // Meal history with two sample meals (written to the simulator's own folder).
+             let now = Date()
+@@ -280,17 +296,24 @@ final class ChartPreviewViewController: UIViewController {
+         legend.numberOfLines = 2
+         legend.font = .preferredFont(forTextStyle: .footnote)
+         legend.textColor = .secondaryLabel
+-        legend.text = "Preview data. Green: looping. Red: not looping (15+ min). Gray: automatic dosing off. Faint lines: past predictions."
++        let onCount = Customization.allCases.filter { $0.isOn }.count
++        legend.text = "Preview data. Customizations on: \(onCount) of \(Customization.allCases.count). Green: looping. Red: not looping. Gray: automatic dosing off."
+         view.addSubview(legend)
+         placedViews.append(legend)
+         y += 40
+ 
+-        let rows: [(String, StatusChartsManager.ChartIndex, CGFloat)] = [
++        // Same rows as the main screen for the current Customizations switches.
++        let rows: [(String, StatusChartsManager.ChartIndex, CGFloat)] = Customization.combinedInsulinChart.isOn ? [
+             ("Glucose", .glucose, 190),
+             ("Insulin (delivery bars and active insulin, same scale)", .dose, 120),
+             ("Active Carbohydrates", .cob, 90)
++        ] : [
++            ("Glucose", .glucose, 170),
++            ("Active Insulin", .iob, 80),
++            ("Insulin Delivery", .dose, 80),
++            ("Active Carbohydrates", .cob, 80)
+         ]
+-        let viewport = window.viewport(now: now, fixedHorizontalMargin: charts.fixedHorizontalMargin, labelAreaWidth: charts.labelAreaWidth)
++        let viewport: ChartViewport? = Customization.chartHistoryAndGestures.isOn ? window.viewport(now: now, fixedHorizontalMargin: charts.fixedHorizontalMargin, labelAreaWidth: charts.labelAreaWidth) : nil
+         charts.prerender()
+         if containers.isEmpty {
+             containers = rows.map { row in
+diff --git a/Loop/Loop/View Controllers/PredictionTableViewController.swift b/Loop/Loop/View Controllers/PredictionTableViewController.swift
+index 371cff0..650309c 100644
+--- a/Loop/Loop/View Controllers/PredictionTableViewController.swift	
++++ b/Loop/Loop/View Controllers/PredictionTableViewController.swift	
+@@ -213,7 +213,8 @@ class PredictionTableViewController: LoopChartsTableViewController, Identifiable
+         case .inputs:
+             return availableInputs.count
+         case .display:
+-            return 1
++            // Only with the Past Predictions customization on.
++            return Customization.forecastCloud.isOn ? 1 : 0
+         }
+     }
+ 
+diff --git a/Loop/Loop/View Controllers/StatusTableViewController.swift b/Loop/Loop/View Controllers/StatusTableViewController.swift
+index d5ddb8e..f2d9871 100644
+--- a/Loop/Loop/View Controllers/StatusTableViewController.swift	
++++ b/Loop/Loop/View Controllers/StatusTableViewController.swift	
+@@ -55,11 +55,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         tableView.register(AlertPermissionsDisabledWarningCell.self, forCellReuseIdentifier: AlertPermissionsDisabledWarningCell.className)
+         tableView.register(MuteAlertsWarningCell.self, forCellReuseIdentifier: MuteAlertsWarningCell.className)
+ 
+-        if FeatureFlags.predictedGlucoseChartClampEnabled {
+-            statusCharts.glucose.glucoseDisplayRange = LoopConstants.glucoseChartDefaultDisplayBoundClamped
+-        } else {
+-            statusCharts.glucose.glucoseDisplayRange = LoopConstants.glucoseChartDefaultDisplayBound
+-        }
++        statusCharts.glucose.glucoseDisplayRange = Self.defaultGlucoseDisplayRange
+ 
+         registerPumpManager()
+         registerCGMManager()
+@@ -67,7 +63,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         let notificationCenter = NotificationCenter.default
+ 
+         // Keeps a copy of each cycle's time and prediction so the charts survive a restart (display only).
+-        LoopChartHistoryCache.shared.startRecording(loopManager: deviceManager.loopManager, dosingDecisionStore: deviceManager.dosingDecisionStore)
++        startChartHistoryRecordingIfNeeded()
++
++        // Settings → Customizations
++        notificationObservers.append(notificationCenter.addObserver(forName: Customization.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
++            self?.applyCustomizationChange()
++        })
+ 
+         notificationObservers += [
+             notificationCenter.addObserver(forName: .LoopDataUpdated, object: deviceManager.loopManager, queue: nil) { [weak self] note in
+@@ -329,8 +330,12 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         }
+ #if compiler(>=6.4)
+         if #available(iOS 27, *) {
+-            // Steel's choice: keep the buttons' normal padding so the bar stays its original,
+-            // wider size (removing it shrank the bar on iOS 27).
++            // Customization: keep the buttons' normal padding so the bar stays its original,
++            // wider size (Loop removes it on iOS 27, which narrows the bar).
++            let removesPadding = !Customization.originalToolbarSize.isOn
++            for item in [carbsItem, preMealItem, bolusItem, workoutItem, settingsItem] {
++                item.isPaddingRemoved = removesPadding
++            }
+             settingsItem.visibilityPriority = .high
+         }
+ #endif
+@@ -489,6 +494,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             self?.visibleChartCells.map { $0.chartContainer } ?? []
+         }
+         chartGestures.isChartLocation = { [weak self] point in
++            // Customization: with history and gestures off, the charts work as in regular Loop.
++            guard Customization.chartHistoryAndGestures.isOn else {
++                return false
++            }
+             guard let self = self, let indexPath = self.tableView.indexPathForRow(at: point) else {
+                 return false
+             }
+@@ -514,10 +523,10 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             guard let self = self,
+                   let indexPath = self.tableView.indexPathForRow(at: point),
+                   Section(rawValue: indexPath.section) == .charts,
+-                  let row = ChartRow(rawValue: indexPath.row) else {
++                  indexPath.row < self.chartRows.count else {
+                 return
+             }
+-            self.openChartDetail(row, sender: indexPath)
++            self.openChartDetail(self.chartRows[indexPath.row], sender: indexPath)
+         }
+         chartGestures.install(on: tableView)
+     }
+@@ -625,6 +634,24 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         // How much time to show by default? Use the screen size as a guide, as Loop always has.
+         let availableWidth = (refreshContext.newSize ?? tableView.bounds.size).width - charts.fixedHorizontalMargin
+ 
++        guard Customization.chartHistoryAndGestures.isOn else {
++            // Regular Loop: the charts end at the screen's right edge and always show now.
++            let totalHours = floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour))
++            let futureHours = ceil(deviceManager.doseStore.longestEffectDuration.hours)
++            let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
++
++            let date = Date(timeIntervalSinceNow: -TimeInterval(hours: historyHours))
++            let chartStartDate = Calendar.current.nextDate(after: date, matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? date
++            if charts.startDate != chartStartDate || charts.xAxisStep != .hours(1) {
++                refreshContext.formUnion(RefreshContext.all)
++            }
++            charts.xAxisStep = .hours(1)
++            charts.startDate = chartStartDate
++            charts.maxEndDate = chartStartDate.addingTimeInterval(.hours(totalHours))
++            charts.updateEndDate(charts.maxEndDate)
++            return
++        }
++
+         let totalHours = max(1, floor(Double(availableWidth / LoopConstants.minimumChartWidthPerHour)))
+         let futureHours = ceil(deviceManager.doseStore.longestEffectDuration.hours)
+         let historyHours = max(LoopConstants.statusChartMinimumHistoryDisplay.hours, totalHours - futureHours)
+@@ -767,7 +794,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+         // 7 days of glucose sets a fixed glucose scale, so scrolling doesn't rescale it (display only)
+         var weekGlucoseRange: ClosedRange<Double>?
+-        if currentContext.contains(.glucose) {
++        if currentContext.contains(.glucose), Customization.chartHistoryAndGestures.isOn {
+             reloadGroup.enter()
+             deviceManager.glucoseStore.getGlucoseSamples(start: Date(timeIntervalSinceNow: -TimeInterval.days(7)), end: nil) { result in
+                 if case .success(let samples) = result {
+@@ -784,12 +811,16 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         var loopStatusPeriods: [LoopStatusPeriod]?
+         var pastPredictions: [[GlucoseValue]]?
+         let showsPastPredictions = UserDefaults.standard.showsPastGlucosePredictions
+-        reloadGroup.enter()
+-        // Always loaded: press-and-hold shows one past prediction even with the cloud turned off.
+-        fetchChartHistory(start: startDate, end: historyEndDate, includePastPredictions: true) { history in
+-            loopStatusPeriods = history?.periods
+-            pastPredictions = history?.pastPredictions
+-            reloadGroup.leave()
++        // Read only when a customization that uses it is on.
++        let wantsChartHistory = Customization.loopStatusBackground.isOn || Customization.forecastCloud.isOn
++        if wantsChartHistory {
++            reloadGroup.enter()
++            // Always loaded: press-and-hold shows one past prediction even with the cloud turned off.
++            fetchChartHistory(start: startDate, end: historyEndDate, includePastPredictions: true) { history in
++                loopStatusPeriods = history?.periods
++                pastPredictions = history?.pastPredictions
++                reloadGroup.leave()
++            }
+         }
+ 
+         if currentContext.contains(.insulin) {
+@@ -896,12 +927,16 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             }
+ 
+             // Loop status background
+-            if let loopStatusPeriods = loopStatusPeriods {
++            if !wantsChartHistory {
++                charts.setLoopStatusPeriods([])
++            } else if let loopStatusPeriods = loopStatusPeriods {
+                 charts.setLoopStatusPeriods(loopStatusPeriods)
+             }
+ 
+             // Past predictions
+-            if let pastPredictions = pastPredictions {
++            if !wantsChartHistory {
++                charts.setPastPredictions([])
++            } else if let pastPredictions = pastPredictions {
+                 charts.setPastPredictions(pastPredictions)
+             }
+             charts.setShowsPastPredictionsCloud(showsPastPredictions)
+@@ -996,11 +1031,19 @@ final class StatusTableViewController: LoopChartsTableViewController {
+ 
+     private enum ChartRow: Int, CaseIterable {
+         case glucose
+-        // Active insulin is drawn inside the dose chart, so there is no separate row for it.
++        case iob
+         case dose
+         case cob
+     }
+ 
++    /// The chart rows shown. With the combined insulin chart on, active insulin is drawn inside
++    /// the dose chart, so there is no separate row for it. Changed only together with a table reload.
++    private var chartRows: [ChartRow] = StatusTableViewController.currentChartRows()
++
++    private static func currentChartRows() -> [ChartRow] {
++        return Customization.combinedInsulinChart.isOn ? [.glucose, .dose, .cob] : ChartRow.allCases
++    }
++
+     // MARK: Glucose
+ 
+     private var eventualGlucoseDescription: String?
+@@ -1220,7 +1263,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+         case .hud:
+             return shouldShowHUD ? 1 : 0
+         case .charts:
+-            return ChartRow.allCases.count
++            return chartRows.count
+         case .status:
+             return shouldShowStatus ? StatusRow.allCases.count : 0
+         }
+@@ -1328,18 +1371,27 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             let cell = tableView.dequeueReusableCell(withIdentifier: ChartTableViewCell.className, for: indexPath) as! ChartTableViewCell
+             cell.chartViewport = chartViewport
+ 
+-            switch ChartRow(rawValue: indexPath.row)! {
++            switch chartRows[indexPath.row] {
+             case .glucose:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.glucoseChart(withFrame: frame)?.view
+                 })
+                 cell.setTitleLabelText(label: NSLocalizedString("Glucose", comment: "The title of the glucose and prediction graph"))
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
++            case .iob:
++                cell.setChartGenerator(generator: { [weak self] (frame) in
++                    return self?.statusCharts.iobChart(withFrame: frame)?.view
++                })
++                cell.setTitleLabelText(label: NSLocalizedString("Active Insulin", comment: "The title of the Insulin On-Board graph"))
+             case .dose:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.doseChart(withFrame: frame)?.view
+                 })
+-                cell.setTitleLabelText(label: NSLocalizedString("Insulin", comment: "The title of the combined insulin delivery and active insulin graph"))
++                if Customization.combinedInsulinChart.isOn {
++                    cell.setTitleLabelText(label: NSLocalizedString("Insulin", comment: "The title of the combined insulin delivery and active insulin graph"))
++                } else {
++                    cell.setTitleLabelText(label: NSLocalizedString("Insulin Delivery", comment: "The title of the insulin delivery graph"))
++                }
+             case .cob:
+                 cell.setChartGenerator(generator: { [weak self] (frame) in
+                     return self?.statusCharts.cobChart(withFrame: frame)?.view
+@@ -1476,7 +1528,7 @@ final class StatusTableViewController: LoopChartsTableViewController {
+     private func tableView(_ tableView: UITableView, updateSubtitleFor cell: ChartTableViewCell, at indexPath: IndexPath) {
+         switch Section(rawValue: indexPath.section)! {
+         case .charts:
+-            switch ChartRow(rawValue: indexPath.row)! {
++            switch chartRows[indexPath.row] {
+             case .glucose:
+                 if let eventualGlucose = eventualGlucoseDescription {
+                     cell.setSubtitleLabel(label: String(format: NSLocalizedString("Eventually %@", comment: "The subtitle format describing eventual glucose. (1: localized glucose value description)"), eventualGlucose))
+@@ -1484,12 +1536,18 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                     cell.setSubtitleLabel(label: nil)
+                 }
+                 cell.doesNavigate = automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled
++            case .iob:
++                if let currentIOB = currentIOBDescription {
++                    cell.setSubtitleLabel(label: currentIOB)
++                } else {
++                    cell.setSubtitleLabel(label: nil)
++                }
+             case .dose:
+                 let integerFormatter = NumberFormatter()
+                 integerFormatter.maximumFractionDigits = 0
+ 
+                 var parts: [String] = []
+-                if let currentIOB = currentIOBDescription {
++                if Customization.combinedInsulinChart.isOn, let currentIOB = currentIOBDescription {
+                     parts.append(String(format: NSLocalizedString("%@ active", comment: "The subtitle part describing active insulin. (1: localized insulin amount)"), currentIOB))
+                 }
+                 if  let total = totalDelivery,
+@@ -1519,13 +1577,13 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             var availableSize = max(tableView.bounds.width, tableView.bounds.height)
+             availableSize -= (tableView.safeAreaInsets.top + tableView.safeAreaInsets.bottom + hudHeight)
+ 
+-            switch ChartRow(rawValue: indexPath.row)! {
++            switch chartRows[indexPath.row] {
+             case .glucose:
+                 return max(106, 0.37 * availableSize)
+-            case .dose:
++            case .dose where Customization.combinedInsulinChart.isOn:
+                 // Taller than before, since it now holds both insulin charts.
+                 return max(120, 0.27 * availableSize)
+-            case .cob:
++            case .iob, .dose, .cob:
+                 return max(106, 0.21 * availableSize)
+             }
+         case .hud, .status, .alertWarning:
+@@ -1606,13 +1664,17 @@ final class StatusTableViewController: LoopChartsTableViewController {
+                 }
+             }
+         case .charts:
+-            // Charts open with a double-tap, so a single tap while dragging does nothing.
+-            tableView.deselectRow(at: indexPath, animated: false)
++            if Customization.chartHistoryAndGestures.isOn {
++                // Charts open with a double-tap, so a single tap while dragging does nothing.
++                tableView.deselectRow(at: indexPath, animated: false)
++            } else {
++                openChartDetail(chartRows[indexPath.row], sender: indexPath)
++            }
+         }
+     }
+ 
+     override func tableView(_ tableView: UITableView, shouldHighlightRowAt indexPath: IndexPath) -> Bool {
+-        return Section(rawValue: indexPath.section) != .charts
++        return Section(rawValue: indexPath.section) != .charts || !Customization.chartHistoryAndGestures.isOn
+     }
+ 
+     private func openChartDetail(_ row: ChartRow, sender indexPath: IndexPath) {
+@@ -1621,13 +1683,63 @@ final class StatusTableViewController: LoopChartsTableViewController {
+             if automaticDosingStatus.automaticDosingEnabled || !FeatureFlags.simpleBolusCalculatorEnabled {
+                 performSegue(withIdentifier: PredictionTableViewController.className, sender: indexPath)
+             }
+-        case .dose:
++        case .iob, .dose:
+             performSegue(withIdentifier: InsulinDeliveryTableViewController.className, sender: indexPath)
+         case .cob:
+             performSegue(withIdentifier: CarbAbsorptionViewController.className, sender: indexPath)
+         }
+     }
+ 
++    // MARK: - Customizations
++
++    private static var defaultGlucoseDisplayRange: ClosedRange<HKQuantity> {
++        return FeatureFlags.predictedGlucoseChartClampEnabled ? LoopConstants.glucoseChartDefaultDisplayBoundClamped : LoopConstants.glucoseChartDefaultDisplayBound
++    }
++
++    private func startChartHistoryRecordingIfNeeded() {
++        guard Customization.loopStatusBackground.isOn || Customization.forecastCloud.isOn else {
++            return
++        }
++        LoopChartHistoryCache.shared.startRecording(loopManager: deviceManager.loopManager, dosingDecisionStore: deviceManager.dosingDecisionStore)
++    }
++
++    /// The switches as the screen was last drawn with.
++    private var appliedCustomizations = Customization.current
++
++    /// Redraws the main screen after a switch in Settings → Customizations changes.
++    private func applyCustomizationChange() {
++        let current = Customization.current
++        guard current != appliedCustomizations else {
++            return
++        }
++        appliedCustomizations = current
++
++        setupToolbarItems()
++        startChartHistoryRecordingIfNeeded()
++        statusCharts.applyGlucoseCeilingCustomization()
++
++        if !Customization.chartHistoryAndGestures.isOn {
++            // Back to regular Loop's charts: now, fitted to the screen.
++            chartGestures.cancel()
++            var window = chartGestures.window
++            window.pinnedStart = nil
++            chartGestures.window = window
++            chartZoomedByUser = false
++            chartViewport = nil
++            for cell in visibleChartCells {
++                cell.chartViewport = nil
++            }
++            statusCharts.setHoldsYAxisRanges(false)
++            statusCharts.setGlucoseDisplayRange(Self.defaultGlucoseDisplayRange)
++            tableView.tableFooterView = nil
++        }
++
++        chartRows = Self.currentChartRows()
++        refreshContext.formUnion(RefreshContext.all)
++        tableView.reloadData()
++        reloadData(animated: false)
++    }
++
+     private func presentUnmuteAlertConfirmation() {
+         let title = NSLocalizedString("Unmute Alerts?", comment: "The alert title for unmute alert confirmation")
+         let body = NSLocalizedString("Tap Unmute to resume sound for your alerts and alarms.", comment: "The alert body for unmute alert confirmation")
+diff --git a/Loop/Loop/Views/AlertManagementView.swift b/Loop/Loop/Views/AlertManagementView.swift
+index 465ac58..bc88aaf 100644
+--- a/Loop/Loop/Views/AlertManagementView.swift
++++ b/Loop/Loop/Views/AlertManagementView.swift
+@@ -73,7 +73,9 @@ struct AlertManagementView: View {
+             if FeatureFlags.missedMealNotifications {
+                 missedMealAlertSection
+             }
+-            lowReservoirAlertSection
++            if Customization.lowReservoirRepeat.isOn {
++                lowReservoirAlertSection
++            }
+         }
+         .navigationTitle(NSLocalizedString("Alert Management", comment: "Title of alert management screen"))
+     }
+diff --git a/Loop/Loop/Views/CarbEntryView.swift b/Loop/Loop/Views/CarbEntryView.swift
+index 01c95ed..de3cbdf 100644
+--- a/Loop/Loop/Views/CarbEntryView.swift
++++ b/Loop/Loop/Views/CarbEntryView.swift
+@@ -68,7 +68,7 @@ struct CarbEntryView: View, HorizontalSizeClassOverride {
+             
+             ScrollViewReader { scrollProxy in
+             ScrollView {
+-                if isNewEntry {
++                if isNewEntry, Customization.mealBreakdown.isOn {
+                     entryModePicker
+                 }
+ 
+@@ -332,7 +332,7 @@ extension CarbEntryView {
+             if showsMealFormula {
+                 MealBreakdownFormulaRows(formula: $viewModel.mealFormula)
+                 HStack(alignment: .firstTextBaseline) {
+-                    Text("Changes here are for this meal only. Set the default in Settings → Meal Breakdown.", comment: "Meal breakdown: note under the one-meal formula card")
++                    Text("Changes here are for this meal only. Set the default in Settings → Customizations → Meal Breakdown.", comment: "Meal breakdown: note under the one-meal formula card")
+                         .font(.caption)
+                         .foregroundColor(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
+index b4e8721..e37bdd2 100644
+--- a/Loop/Loop/Views/SettingsView.swift
++++ b/Loop/Loop/Views/SettingsView.swift
+@@ -279,12 +279,12 @@ extension SettingsView {
+                             descriptiveText: NSLocalizedString("Diabetes Treatment", comment: "Descriptive text for Therapy Settings"))
+             }
+ 
+-            NavigationLink(destination: MealBreakdownSettingsView()) {
++            NavigationLink(destination: CustomizationsView()) {
+                 LargeButton(action: { },
+                             includeArrow: false,
+-                            imageView: Image(systemName: "fork.knife.circle").resizable().aspectRatio(contentMode: .fit).foregroundColor(carbTintColor).frame(width: 30),
+-                            label: NSLocalizedString("Meal Breakdown", comment: "Title text for button to Meal Breakdown settings"),
+-                            descriptiveText: NSLocalizedString("Default Meal Formula", comment: "Descriptive text for Meal Breakdown settings"))
++                            imageView: Image(systemName: "slider.horizontal.3").resizable().aspectRatio(contentMode: .fit).foregroundColor(.accentColor).frame(width: 30),
++                            label: NSLocalizedString("Customizations", comment: "Title text for button to Customizations"),
++                            descriptiveText: NSLocalizedString("Optional Features", comment: "Descriptive text for Customizations"))
+             }
+ 
+             ForEach(pluginMenuItems.filter {$0.section == .configuration}) { item in
+@@ -730,3 +730,118 @@ struct LowReservoirAlertSettingsView: View {
+         }
+     }
+ }
++
++
++// MARK: - Customizations
++
++/// Settings → Customizations: optional features, grouped, each with its own page and switch.
++struct CustomizationsView: View {
++    /// Re-read when a switch changes, so the On/Off labels stay current.
++    @State private var states = Customization.current
++
++    var body: some View {
++        List {
++            Section {
++                Text("Everything here starts off, so the app works like regular Loop. Turn features on one at a time. Most change only what is shown; Meal Breakdown and Low Reservoir Repeat say on their pages what else they do.", comment: "Customizations: intro")
++                    .font(.footnote)
++                    .foregroundColor(.secondary)
++                    .fixedSize(horizontal: false, vertical: true)
++            }
++            ForEach(Customization.Group.allCases, id: \.self) { group in
++                Section(header: Text(group.title)) {
++                    ForEach(group.members) { customization in
++                        NavigationLink(destination: CustomizationDetailView(customization: customization)) {
++                            HStack(spacing: 12) {
++                                Image(systemName: customization.systemImage)
++                                    .foregroundColor(.accentColor)
++                                    .frame(width: 28)
++                                VStack(alignment: .leading, spacing: 2) {
++                                    Text(customization.title)
++                                    Text(customization.summary)
++                                        .font(.footnote)
++                                        .foregroundColor(.secondary)
++                                }
++                                Spacer()
++                                Text(states[customization] == true
++                                     ? NSLocalizedString("On", comment: "Customizations: switch is on")
++                                     : NSLocalizedString("Off", comment: "Customizations: switch is off"))
++                                    .foregroundColor(.secondary)
++                            }
++                        }
++                    }
++                }
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(NSLocalizedString("Customizations", comment: "Customizations screen title"))
++        .onAppear {
++            states = Customization.current
++        }
++        .onReceive(NotificationCenter.default.publisher(for: Customization.didChangeNotification)) { _ in
++            states = Customization.current
++        }
++    }
++}
++
++/// One customization: what it does, and its switch.
++struct CustomizationDetailView: View {
++    let customization: Customization
++    @State private var isOn: Bool
++    @State private var lowReservoirInterval: TimeInterval = LowReservoirAlertThrottle.repeatInterval
++
++    init(customization: Customization) {
++        self.customization = customization
++        _isOn = State(initialValue: customization.isOn)
++    }
++
++    var body: some View {
++        List {
++            Section {
++                Toggle(isOn: $isOn) {
++                    Label(customization.title, systemImage: customization.systemImage)
++                }
++            }
++            Section(header: Text("What it does", comment: "Customization page: explanation header")) {
++                ForEach(customization.details, id: \.self) { paragraph in
++                    Text(paragraph)
++                        .fixedSize(horizontal: false, vertical: true)
++                        .padding(.vertical, 2)
++                }
++            }
++            if isOn {
++                extraSettings
++            }
++        }
++        .insetGroupedListStyle()
++        .navigationTitle(customization.title)
++        .onChange(of: isOn) { _, newValue in
++            customization.isOn = newValue
++        }
++        .onChange(of: lowReservoirInterval) { _, newValue in
++            LowReservoirAlertThrottle.repeatInterval = newValue
++        }
++    }
++
++    @ViewBuilder
++    private var extraSettings: some View {
++        switch customization {
++        case .mealBreakdown:
++            Section {
++                NavigationLink(destination: MealBreakdownSettingsView()) {
++                    Label(NSLocalizedString("Meal Formula and History", comment: "Customization page: link to the Meal Breakdown formula and history"), systemImage: "function")
++                }
++            }
++        case .lowReservoirRepeat:
++            Section(footer: Text("Also in Settings → Alert Management.", comment: "Low reservoir customization: where else the setting is")) {
++                Picker(NSLocalizedString("Repeat every", comment: "Low Reservoir Alerts: picker title"), selection: $lowReservoirInterval) {
++                    ForEach(LowReservoirAlertThrottle.intervalChoices, id: \.self) { choice in
++                        Text(LowReservoirAlertThrottle.intervalText(choice)).tag(choice)
++                    }
++                }
++                .pickerStyle(.menu)
++            }
++        default:
++            EmptyView()
++        }
++    }
++}

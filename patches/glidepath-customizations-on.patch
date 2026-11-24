@@ -1,0 +1,13 @@
+diff --git a/Loop/Loop/Managers/StatusChartsManager.swift b/Loop/Loop/Managers/StatusChartsManager.swift
+index 5aac98a..6c862d7 100644
+--- a/Loop/Loop/Managers/StatusChartsManager.swift
++++ b/Loop/Loop/Managers/StatusChartsManager.swift
+@@ -518,7 +518,7 @@ enum Customization: String, CaseIterable, Identifiable {
+ 
+     /// What a switch is set to before anyone touches it. A personal build can change this one line
+     /// to start with everything on.
+-    static let defaultIsOn = false
++    static let defaultIsOn = true
+ 
+     /// Posted on the main queue whenever a switch changes.
+     static let didChangeNotification = Notification.Name("com.loopkit.Loop.CustomizationDidChange")
