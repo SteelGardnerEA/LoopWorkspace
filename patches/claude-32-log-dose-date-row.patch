@@ -1,0 +1,27 @@
+diff --git a/Loop/Loop/Views/ManualEntryDoseView.swift b/Loop/Loop/Views/ManualEntryDoseView.swift
+index 4c55b6b..7bdb30d 100644
+--- a/Loop/Loop/Views/ManualEntryDoseView.swift
++++ b/Loop/Loop/Views/ManualEntryDoseView.swift
+@@ -158,15 +158,13 @@ struct ManualEntryDoseView: View {
+     }
+     private var datePicker: some View {
+         // Allow 6 hours before & after due to longest DIA
+-        ZStack(alignment: .topLeading) {
+-            DatePicker(
+-                String(""),
+-                selection: $viewModel.selectedDoseDate,
+-                in: Date().addingTimeInterval(-.hours(6))...Date().addingTimeInterval(.hours(6)),
+-                displayedComponents: [.date, .hourAndMinute]
+-            )
+-            .pickerStyle(WheelPickerStyle())
+-            
++        // The label is the date picker's own, so it lines up beside the date and time instead of
++        // being drawn on top of them (newer iOS versions moved the picker under the old overlay).
++        DatePicker(
++            selection: $viewModel.selectedDoseDate,
++            in: Date().addingTimeInterval(-.hours(6))...Date().addingTimeInterval(.hours(6)),
++            displayedComponents: [.date, .hourAndMinute]
++        ) {
+             Text(NSLocalizedString("Date", comment: "Date picker label"))
+         }
+     }
