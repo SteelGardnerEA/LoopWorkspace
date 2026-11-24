@@ -137,23 +137,6 @@ jobs:
             sleep 12
             xcrun simctl io "${UDID}" screenshot "build/screenshots/${name}.png" || true
           }
-          # Before and After pictures for each Customizations page: everything off,
-          # then just that one switch on. Ends with every switch back on.
-          examples() {
-            local suffix="$1"
-            shot "before-charts${suffix}" -ClaudeCustomizations off
-            shot "before-charts-high${suffix}" -ClaudeCustomizations off -ClaudeChartPreviewHigh 1
-            shot "before-meal${suffix}" -ClaudeMealPreview -ClaudeCustomizations off
-            shot "before-low-reservoir${suffix}" -ClaudeLowReservoirPreview -ClaudeCustomizations off
-            for c in loopStatusBackground combinedInsulinChart forecastCloud bolusMarks; do
-              shot "after-${c}${suffix}" -ClaudeCustomizationOnly "${c}"
-            done
-            shot "after-glucoseCeiling${suffix}" -ClaudeCustomizationOnly glucoseCeiling -ClaudeChartPreviewHigh 1
-            shot "after-chartHistoryAndGestures${suffix}" -ClaudeCustomizationOnly chartHistoryAndGestures -ClaudeChartPreviewHoursBack 60
-            shot "after-mealBreakdown${suffix}" -ClaudeMealPreview -ClaudeCustomizationOnly mealBreakdown
-            shot "after-lowReservoirRepeat${suffix}" -ClaudeLowReservoirPreview -ClaudeCustomizationOnly lowReservoirRepeat
-            shot "customizations-all-on${suffix}" -ClaudeCustomizationsPreview -ClaudeCustomizations on
-          }
           xcrun simctl ui "${UDID}" appearance light || true
           # Settings → Customizations, then the charts with every switch off (regular Loop),
           # then on (the rest of the shots keep them on).
@@ -164,7 +147,6 @@ jobs:
           shot customization-history -ClaudeCustomizationDetailPreview chartHistoryAndGestures
           shot customization-meal -ClaudeCustomizationDetailPreview mealBreakdown
           shot customization-bottom-bar -ClaudeCustomizationDetailPreview originalToolbarSize
-          shot log-dose -ClaudeLogDosePreview
           shot charts-light-60-hours-back -ClaudeChartPreviewHoursBack 60
           shot charts-light-24-hour-zoom -ClaudeChartPreviewZoomHours 24
           shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
@@ -186,10 +168,7 @@ jobs:
           shot meal-breakdown-dark -ClaudeMealPreview
           shot low-reservoir-settings-dark -ClaudeLowReservoirPreview
           shot customization-bolus-marks-dark -ClaudeCustomizationDetailPreview bolusMarks
-          shot log-dose-dark -ClaudeLogDosePreview
-          examples -dark
           xcrun simctl ui "${UDID}" appearance light || true
-          examples ""
           xcrun simctl ui "${UDID}" appearance light || true
 
           # Any crash reports from this run, printed into the log.
