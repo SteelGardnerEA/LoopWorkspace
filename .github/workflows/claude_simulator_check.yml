@@ -70,6 +70,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p build
+          build() {
           xcodebuild \
             -workspace LoopWorkspace.xcworkspace \
             -scheme LoopWorkspace \
@@ -83,8 +84,18 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build \
-            | tee build/xcodebuild.log
-          status=${PIPESTATUS[0]}
+            | tee -a build/xcodebuild.log
+          return ${PIPESTATUS[0]}
+          }
+          status=0
+          build || status=$?
+          # A known build-machine hiccup: a plugin framework copied before its Info.plist.
+          # One incremental retry fixes it, so the whole job doesn't have to be rerun.
+          if [ "$status" -ne 0 ] && grep -q "did not contain an Info.plist" build/xcodebuild.log; then
+            echo "Retrying once after the Info.plist hiccup"
+            status=0
+            build || status=$?
+          fi
           echo "xcodebuild exit ${status}" | tee build/build-summary.txt
           xcodebuild -version >> build/build-summary.txt
           if [ "$status" -ne 0 ]; then
