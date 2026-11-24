@@ -162,6 +162,7 @@ jobs:
           shot charts-light -ClaudeCustomizations on
           shot customization-bolus-marks -ClaudeCustomizationDetailPreview bolusMarks
           shot customization-history -ClaudeCustomizationDetailPreview chartHistoryAndGestures
+          shot customization-meal -ClaudeCustomizationDetailPreview mealBreakdown
           shot customization-bottom-bar -ClaudeCustomizationDetailPreview originalToolbarSize
           shot log-dose -ClaudeLogDosePreview
           shot charts-light-60-hours-back -ClaudeChartPreviewHoursBack 60
