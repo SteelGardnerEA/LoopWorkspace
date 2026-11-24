@@ -11432,7 +11432,7 @@ literal 0
 HcmV?d00001
 
 diff --git a/Loop/Loop/SceneDelegate.swift b/Loop/Loop/SceneDelegate.swift
-index 147e2d1..813c7c6 100644
+index 147e2d1..ff9e41e 100644
 --- a/Loop/Loop/SceneDelegate.swift
 +++ b/Loop/Loop/SceneDelegate.swift
 @@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
@@ -11444,10 +11444,17 @@ index 147e2d1..813c7c6 100644
          #else
          return false
          #endif
-@@ -62,6 +62,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+@@ -61,6 +61,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate, WindowProvider {
+                 customization.isOn = on
              }
          }
- 
++        if let index = previewArguments.firstIndex(of: "-ClaudeCustomizationOnly"), index + 1 < previewArguments.count {
++            // Just one switch on, for the "After" example pictures.
++            for customization in Customization.allCases {
++                customization.isOn = customization.rawValue == previewArguments[index + 1]
++            }
++        }
++
 +        if let index = previewArguments.firstIndex(of: "-ClaudeCustomizationDetailPreview"), index + 1 < previewArguments.count,
 +           let customization = Customization(rawValue: previewArguments[index + 1]) {
 +            // One customization's page, with its example picture.
@@ -11455,25 +11462,50 @@ index 147e2d1..813c7c6 100644
 +            window?.makeKeyAndVisible()
 +            return
 +        }
-+
+ 
          if previewArguments.contains("-ClaudeCustomizationsPreview") {
              // Settings → Customizations.
-             window?.rootViewController = UIHostingController(rootView: NavigationStack { CustomizationsView() })
+@@ -357,12 +371,14 @@ final class ChartPreviewViewController: UIViewController {
+ 
+     private func loadSampleData() {
+         let now = self.now
+-        let range = window.renderRange(now: now)
++        // With history and gestures off, the time range regular Loop shows: just what fits on screen.
++        let historyOn = Customization.chartHistoryAndGestures.isOn
++        let range = historyOn ? window.renderRange(now: now) : DateInterval(start: window.liveStart(now: now), end: window.liveStart(now: now).addingTimeInterval(window.duration))
+         let start = range.start
+-        let historyEnd: Date? = window.isLive ? nil : range.end
++        let historyEnd: Date? = (window.isLive || !historyOn) ? nil : range.end
+         let dataEnd = min(now, historyEnd ?? now)
+ 
+-        charts.xAxisStep = window.axisStep
++        charts.xAxisStep = historyOn ? window.axisStep : .hours(1)
+         charts.startDate = start
+         charts.maxEndDate = range.end
+         charts.updateEndDate(range.end)
+@@ -482,7 +498,8 @@ enum MealBreakdownPreview {
+     static func makeViewController() -> UIViewController {
+         let delegate = PreviewCarbEntryDelegate()
+         let viewModel = CarbEntryViewModel(delegate: delegate)
+-        viewModel.entryMode = .mealBreakdown
++        // The "Before" picture shows Loop's own carb screen.
++        viewModel.entryMode = Customization.mealBreakdown.isOn ? .mealBreakdown : .standard
+         // Steel's example: Costa Vida sweet pork burrito.
+         viewModel.mealCarbs = 115
+         viewModel.mealSugars = 17
 diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
-index e37bdd2..06be724 100644
+index e37bdd2..40f2487 100644
 --- a/Loop/Loop/Views/SettingsView.swift
 +++ b/Loop/Loop/Views/SettingsView.swift
-@@ -801,6 +801,19 @@ struct CustomizationDetailView: View {
+@@ -801,6 +801,17 @@ struct CustomizationDetailView: View {
                      Label(customization.title, systemImage: customization.systemImage)
                  }
              }
-+            if let example = UIImage(named: "Customization Example " + customization.rawValue) {
++            if let before = UIImage(named: "Customization Before " + customization.rawValue),
++               let after = UIImage(named: "Customization After " + customization.rawValue) {
 +                Section(header: Text("Example", comment: "Customization page: example picture header")) {
-+                    Image(uiImage: example)
-+                        .resizable()
-+                        .scaledToFit()
-+                        .clipShape(RoundedRectangle(cornerRadius: 8))
-+                        .accessibilityLabel(Text(customization.summary))
++                    examplePicture(before, label: NSLocalizedString("Before: regular Loop", comment: "Customization page: caption over the picture without the feature"))
++                    examplePicture(after, label: NSLocalizedString("After: with this on", comment: "Customization page: caption over the picture with the feature"))
 +                }
 +            } else if customization == .originalToolbarSize {
 +                Section(header: Text("Example", comment: "Customization page: example picture header")) {
@@ -11483,7 +11515,7 @@ index e37bdd2..06be724 100644
              Section(header: Text("What it does", comment: "Customization page: explanation header")) {
                  ForEach(customization.details, id: \.self) { paragraph in
                      Text(paragraph)
-@@ -814,6 +827,8 @@ struct CustomizationDetailView: View {
+@@ -814,6 +825,8 @@ struct CustomizationDetailView: View {
          }
          .insetGroupedListStyle()
          .navigationTitle(customization.title)
@@ -11492,7 +11524,28 @@ index e37bdd2..06be724 100644
          .onChange(of: isOn) { _, newValue in
              customization.isOn = newValue
          }
-@@ -845,3 +860,39 @@ struct CustomizationDetailView: View {
+@@ -822,6 +835,20 @@ struct CustomizationDetailView: View {
+         }
+     }
+ 
++    private func examplePicture(_ image: UIImage, label: String) -> some View {
++        VStack(alignment: .leading, spacing: 6) {
++            Text(label)
++                .font(.caption)
++                .foregroundColor(.secondary)
++            Image(uiImage: image)
++                .resizable()
++                .scaledToFit()
++                .clipShape(RoundedRectangle(cornerRadius: 8))
++                .accessibilityLabel(Text(label))
++        }
++        .padding(.vertical, 4)
++    }
++
+     @ViewBuilder
+     private var extraSettings: some View {
+         switch customization {
+@@ -845,3 +872,39 @@ struct CustomizationDetailView: View {
          }
      }
  }
