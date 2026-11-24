@@ -11460,7 +11460,7 @@ index 147e2d1..813c7c6 100644
              // Settings → Customizations.
              window?.rootViewController = UIHostingController(rootView: NavigationStack { CustomizationsView() })
 diff --git a/Loop/Loop/Views/SettingsView.swift b/Loop/Loop/Views/SettingsView.swift
-index e37bdd2..7597c0d 100644
+index e37bdd2..06be724 100644
 --- a/Loop/Loop/Views/SettingsView.swift
 +++ b/Loop/Loop/Views/SettingsView.swift
 @@ -801,6 +801,19 @@ struct CustomizationDetailView: View {
@@ -11483,7 +11483,16 @@ index e37bdd2..7597c0d 100644
              Section(header: Text("What it does", comment: "Customization page: explanation header")) {
                  ForEach(customization.details, id: \.self) { paragraph in
                      Text(paragraph)
-@@ -845,3 +858,39 @@ struct CustomizationDetailView: View {
+@@ -814,6 +827,8 @@ struct CustomizationDetailView: View {
+         }
+         .insetGroupedListStyle()
+         .navigationTitle(customization.title)
++        // Small title, so long names aren't cut off.
++        .navigationBarTitleDisplayMode(.inline)
+         .onChange(of: isOn) { _, newValue in
+             customization.isOn = newValue
+         }
+@@ -845,3 +860,39 @@ struct CustomizationDetailView: View {
          }
      }
  }
