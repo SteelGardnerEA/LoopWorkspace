@@ -1,6 +1,8 @@
 # Simulator-only check for the claude-work branch.
 # Compiles Loop for the iOS Simulator, launches it, and saves screenshots.
 # No code signing, no Apple account, no secrets, no upload to Apple.
+# The screenshots are also saved to the claude-screenshots branch (replaced each run),
+# so they can be fetched with git. That is the only reason this workflow can write.
 
 name: Claude simulator check
 
@@ -15,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   simulator:
@@ -145,6 +147,11 @@ jobs:
           shot meal-history -ClaudeMealHistoryPreview
           xcrun simctl ui "${UDID}" appearance dark || true
           shot charts-dark -ClaudeCustomizations on
+          shot charts-dark-60-hours-back -ClaudeChartPreviewHoursBack 60
+          shot charts-dark-high -ClaudeChartPreviewHigh 1
+          shot charts-dark-hold -ClaudeChartPreviewHoursBack 6 -ClaudeChartPreviewHoldX 220
+          shot meal-breakdown-dark -ClaudeMealPreview
+          shot low-reservoir-settings-dark -ClaudeLowReservoirPreview
           xcrun simctl ui "${UDID}" appearance light || true
 
           # Any crash reports from this run, printed into the log.
@@ -177,6 +184,23 @@ jobs:
             echo "CLAUDE-SHOT-END ${name}"
             sleep 2
           done
+
+      - name: Save screenshots to the claude-screenshots branch
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd build/screenshots
+          ls *.png >/dev/null
+          git init -q .
+          git checkout -q -b claude-screenshots
+          git add -- *.png README.txt 2>/dev/null || git add -- *.png
+          git -c user.name="claude-simulator-check" -c user.email="claude-simulator-check@users.noreply.github.com" commit -q -m "Screenshots from run ${GITHUB_RUN_ID} (${GITHUB_SHA})"
+          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" claude-screenshots
+          echo "Saved $(ls *.png | wc -l) screenshots to claude-screenshots"
 
       - name: Upload logs and screenshots
         if: always()
