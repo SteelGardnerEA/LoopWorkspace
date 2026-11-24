@@ -132,6 +132,9 @@ jobs:
           shot customizations -ClaudeCustomizationsPreview -ClaudeCustomizations off
           shot charts-all-off -ClaudeCustomizations off
           shot charts-light -ClaudeCustomizations on
+          shot customization-bolus-marks -ClaudeCustomizationDetailPreview bolusMarks
+          shot customization-history -ClaudeCustomizationDetailPreview chartHistoryAndGestures
+          shot customization-bottom-bar -ClaudeCustomizationDetailPreview originalToolbarSize
           shot charts-light-60-hours-back -ClaudeChartPreviewHoursBack 60
           shot charts-light-24-hour-zoom -ClaudeChartPreviewZoomHours 24
           shot charts-light-mid-drag -ClaudeChartPreviewHoursBack 60 -ClaudeChartPreviewDragPoints 120
@@ -152,6 +155,7 @@ jobs:
           shot charts-dark-hold -ClaudeChartPreviewHoursBack 6 -ClaudeChartPreviewHoldX 220
           shot meal-breakdown-dark -ClaudeMealPreview
           shot low-reservoir-settings-dark -ClaudeLowReservoirPreview
+          shot customization-bolus-marks-dark -ClaudeCustomizationDetailPreview bolusMarks
           xcrun simctl ui "${UDID}" appearance light || true
 
           # Any crash reports from this run, printed into the log.
